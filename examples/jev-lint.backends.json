@@ -1,0 +1,13 @@
+{
+  "name": "jev-lint",
+  "selector": "hosted",
+  "backends": [
+    {
+      "id": "hosted",
+      "base_url": "https://api.typesafe.ai",
+      "model": "jev-1.13.0",
+      "api_key_env": "TYPESAFE_API_KEY",
+      "description": "Hosted TypeSafe Jev, the sole evaluator for reproducible semantic-lint comparisons. Source code submitted here leaves this machine."
+    }
+  ]
+}

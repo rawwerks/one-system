@@ -1,0 +1,9 @@
+{
+  "url": "https://api.typesafe.ai/openapi.json",
+  "retrieved_at": "2026-09-19T20:48:17.621833+00:00",
+  "upstream_sha256": "a191f8a7df6bd6fedced8120dd0fd106f88575d1d1c8360d08900a6c7c0360d5",
+  "openapi": "3.1.0",
+  "version": "0.2.0",
+  "python_sdk_reference": "https://github.com/typesafe-ai/typesafe-sdk-python/tree/v0.7.0",
+  "javascript_sdk_reference": "https://github.com/typesafe-ai/typesafe-sdk-js/tree/v0.6.0"
+}

@@ -1,0 +1,19 @@
+{
+  "model": "routing-demo",
+  "state": "I was charged twice for my subscription. Please refund the duplicate payment.",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": "Which department should handle this request?",
+      "criteria": {
+        "billing": "Charges, payments and refunds",
+        "technical": "Software bugs and service outages",
+        "sales": "Pricing and new purchases"
+      }
+    },
+    "refund_requested": {
+      "type": "noul",
+      "instructions": "Does the customer explicitly request a refund?"
+    }
+  }
+}

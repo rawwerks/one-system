@@ -1,0 +1,107 @@
+# System One scenarios
+
+System One owns the cross-language verification workflow. Go and Hono retain
+their native tests. Scenario collectors execute the existing tools and HTTP
+interfaces, record synthetic observations, and enforce exact invariants in code.
+System One then judges whether those observations honor the recorded contracts.
+The model receives the contract and observed outcome, without the native pass flag.
+It cannot override a failed assertion or make missing evidence pass.
+
+Python remains an implementation dependency of the optional adapter, SDK examples,
+and development commands. There is no Python test suite or test discovery. Small
+transport expressions may call production Python functions without adding Python
+assertions, expectations, or a second test runner.
+
+## Repository safeguards
+
+<!-- true-up:anchor id=repository -->
+Committed ignore rules must protect private/generated paths while keeping source,
+templates and canonical locks trackable. Templates contain blank credentials.
+Every registry artifact must satisfy the 72-hour release-age policy, including
+timezone offsets, missing timestamps and the exact boundary. Installation must
+stop before package synchronization when age validation fails. Doctor failures
+must explain the missing prerequisite without tracebacks. Secret scanning must
+exclude escaping symlinks, include staged changes and history, redact findings,
+and fail when the scanner is unavailable or detects a secret. Indexed gitlinks
+must resolve to initialized repositories at their recorded commits. Child and
+nested submodules contribute tracked and nonignored sources plus their staged
+changes and history; ignored private files must never be opened or enumerated.
+Missing, uninitialized, mismatched, symlinked, or otherwise unsafe sources must
+fail preflight before any source copy or scanner invocation.
+<!-- true-up:end id=repository -->
+
+## SDK consumers and evidence admission
+
+<!-- true-up:anchor id=examples -->
+Skill suggestions use native System One questions through the SDK, preserve the
+whole candidate roster, and apply the documented gate/verification thresholds.
+CLI consumers require an explicit `--model`; the registry's configured name selects
+automatic routing and a configured backend ID selects direct dispatch. Neither
+the One System project name nor a demo configuration supplies an implicit model.
+Malformed answers, redirects and HTTP failures are errors, never abstentions or
+silent retries. Private corpus loading and transmission require explicit opt-in;
+invalid paths, duplicate identities and symlinks cannot expose private content.
+Review export is restricted to declared public sources. Backend admission requires
+fresh candidate, rubric, endpoint and request/response evidence; tampering,
+missing records, invalid native outputs or changed identities cannot produce
+readiness. Uncertain semantic evidence holds, and inference-boundary violations
+reject admission. Recorded usage and native probabilities remain intact.
+Public-release review lists files through Git, so ignored files are never opened
+or sent, including a file tracked despite the ignore rules, which is reported
+unreviewed. Symbolic links are reported unreviewed rather than followed. Each
+chunk is one native request carrying the whole versioned question battery under
+the explicit `--model`; nothing is sent without `--confirm-send`. Code thresholds
+turn the Noul, Choice and Score answers into pass, note, review or block: a Noul
+at or above the action threshold triggers its hazard's action, one at or above
+the review threshold triggers review unless the hazard is note-only, severity at
+or above its threshold turns review into block, and severe exposure with no
+triggered hazard still requires review. Output holds answers and paths, never file
+content. Findings or unreviewed paths exit `1`; refusals and failures exit `2`.
+With `--history`, blobs reachable from refs but absent from the index are reviewed
+as well. Text already answered in the same output ledger is not sent again,
+within a run or across resumed runs. `.gitignore` does not filter published
+history, so a historical path that current ignore rules exclude is reported
+unreviewed, which makes the run exit `1` even without model findings, and its
+content is never sent.
+<!-- true-up:end id=examples -->
+
+## Worker transport
+
+<!-- true-up:anchor id=worker -->
+The actual built Worker must enforce authentication and expose the configured
+model/capability catalogue. The required registry name identifies its automatic
+route and appears first in model discovery, followed by sorted backend IDs; it
+must be a nonempty string matching `^[A-Za-z0-9_-]+$` without a backend-ID collision.
+There is no implicit automatic alias. It must reject invalid routes and unsupported requests
+before invoking a backend. Forwarded native JSON must preserve precision and
+special object keys. Successful response bytes remain unchanged, and upstream
+proxy errors become sanitized gateway errors without forwarding private causes.
+<!-- true-up:end id=worker -->
+
+## Optional local inference
+
+<!-- true-up:anchor id=laya -->
+The local adapter rejects unknown runtimes and missing or incomplete checkpoints
+without downloading replacements. Its installed runtime can import and perform
+tensor operations. Real checkpoint verification requires authenticated HTTP
+inference, native typed answers and usage, catalogue authentication, rejection
+before truncation, and forwarding through the Go gateway. Missing prerequisites
+are incomplete evidence, never a passing inference test.
+<!-- true-up:end id=laya -->
+
+`make verify` collects repository, SDK consumer and Worker scenarios and sends
+batches of at most eight observations to the declared System One questions. Each
+scenario gets its own typed judgment; batching shares context, not verdicts. `make check-scenarios`
+collects the same observations offline; it does not claim semantic verification.
+Each run keeps private evidence under `.build/`. There are no automatic installs.
+
+`make check-laya-startup` collects only startup/runtime observations. With a prepared
+adapter, `LAYA_MODEL_PATH`, and evaluator credentials, `make check-laya` includes
+the complete local inference profile in System One verification. Missing runtime
+or checkpoint produces an incomplete result. CI startup checks do not certify
+inference; they deliberately need no downloaded weights or hosted credentials.
+
+The migration replaces the former repository, example and adapter unittest files
+and the Python Worker smoke runner. Python-specific discovery tests are obsolete;
+their replacement is the explicit scenario registry. The verifier retains its
+small native tests for evidence integrity, completion status and model transport.

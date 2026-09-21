@@ -1,0 +1,3 @@
+[submodule "vendor/typesafe-skills"]
+	path = third_party/typesafe-skills
+	url = https://github.com/TypeSafe-AI/skills.git

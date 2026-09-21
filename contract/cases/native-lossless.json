@@ -1,0 +1,24 @@
+{
+  "invariants": ["api.native-only", "routing.single-eligible-direct", "transport.lossless-json", "transport.credential-isolation"],
+  "request": {
+    "model": "routing-demo",
+    "state": {"integer": 9007199254740993, "exponent": 1.2300e+04, "beyond_float": 1e400, "negative_zero": -0, "__proto__": {"safe": true}, "constructor": "opaque", "unicode": "é界😀"},
+    "questions": {
+      "__proto__": {"type": "choice", "instructions": {"task": "Select a synthetic label", "reference": 9007199254740993}, "criteria": {"__proto__": {"description": "first", "weight": 2.500e-1}, "constructor": ["second", 9007199254740993]}},
+      "constructor": {"type": "noul", "instructions": ["Is this synthetic?", {"id": 9007199254740993}], "criteria": {"true": "Synthetic", "false": null}},
+      "toString/雪": {"type": "score", "instructions": "Rate the synthetic sample", "criteria": ["low", {"description": "high", "reference": 9007199254740993}]}
+    }
+  },
+  "upstream_response": {
+    "model": "resolved-native-model",
+    "answers": {
+      "__proto__": {"type": "choice", "choice": "__proto__", "confidence": 9.00e-1, "probabilities": {"__proto__": 9.00e-1, "constructor": 1e-1}},
+      "constructor": {"type": "noul", "noul": 7.500e-1},
+      "toString/雪": {"type": "score", "score": 8.00e-1, "confidence": 9e-1, "legend": {"0": "low", "1": {"description": "high", "reference": 9007199254740993}}, "probabilities": {"0": 2e-1, "1": 8e-1}}
+    },
+    "usage": {"input_tokens": 9007199254740993, "output_tokens": 7, "opaque": 2.00e+3},
+    "opaque": {"__proto__": 9007199254740993, "exponent": 1.2300e+04, "beyond_float": 1e400}
+  },
+  "expected_status": 200,
+  "expected_calls": ["local"]
+}

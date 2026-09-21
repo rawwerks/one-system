@@ -1,0 +1,14 @@
+{
+  "domain": {
+    "type": "choice",
+    "instructions": "What domain does `request` belong to?",
+    "criteria": {
+      "code": "software engineering, programming, refactoring, architecture, debugging",
+      "math_or_logic": "mathematics, logic puzzles, proofs, complex calculation",
+      "writing": "creative writing, essays, emails, blog posts, copywriting",
+      "factual_lookup": "facts, definitions, trivia, history",
+      "data_analysis": "statistics, SQL, data manipulation, metrics",
+      "chitchat": "casual conversation, greetings, small talk"
+    }
+  }
+}

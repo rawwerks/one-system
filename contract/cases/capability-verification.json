@@ -1,0 +1,25 @@
+{
+  "invariants": ["routing.hard-capabilities"],
+  "capabilities": {"question_types": ["choice"], "max_criteria": 2},
+  "upstream_response": {"model":"local-model","answers":{"q":{"type":"choice","choice":"a","confidence":0.9,"probabilities":{"a":0.9,"b":0.1}}},"usage":{"input_tokens":11,"output_tokens":3}},
+  "cases": [
+    {
+      "name": "case-alias-type",
+      "question_raw": "{\"type\":\"noul\",\"Type\":\"choice\",\"criteria\":{\"a\":\"A\",\"b\":\"B\"}}",
+      "expected_status": 422,
+      "expected_upstream_calls": 0
+    },
+    {
+      "name": "case-alias-criteria",
+      "question_raw": "{\"type\":\"choice\",\"criteria\":{\"a\":\"A\",\"b\":\"B\",\"c\":\"C\"},\"Criteria\":{\"a\":\"A\",\"b\":\"B\"}}",
+      "expected_status": 422,
+      "expected_upstream_calls": 0
+    },
+    {
+      "name": "supported-choice",
+      "question_raw": "{\"type\":\"choice\",\"criteria\":{\"a\":\"A\",\"b\":\"B\"}}",
+      "expected_status": 200,
+      "expected_upstream_calls": 1
+    }
+  ]
+}

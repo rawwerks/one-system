@@ -1,0 +1,113 @@
+{
+  "version": 2,
+  "product": "one-system",
+  "scope": "Portable observable guarantees shared by independent Go and Hono implementations; not a claim that either implementation has been verified.",
+  "synchronization": {
+    "configuration": ".true-up.json",
+    "graph": ".true-up/depgraph.json",
+    "graph_policy": "Regenerable, uncommitted. Build before using the working-tree gate. Declared dependencies and changed-in-range proof establish edit coverage only, never semantic equivalence. Review may conclude a dependent needs no edit; do not manufacture edits to satisfy coverage.",
+    "commands": [
+      "true-up build",
+      "true-up graph --json",
+      "true-up --impact --since HEAD --proof --json",
+      "true-up gate"
+    ],
+    "missing_links": "Candidate missing edges are advisory review findings. A human must approve any dependency declaration change. No inferred links or automatic declaration edits."
+  },
+  "host_differences": {
+    "allowed": [
+      "Go is a standalone local-first executable; Hono is independently deployable and does not invoke Go.",
+      "Go and Hono Node load the registry from ONE_SYSTEM_CONFIG, listen using ONE_SYSTEM_ADDR, and authenticate using ONE_SYSTEM_API_KEY; Worker deployment obtains equivalent configuration and secrets from bindings and bundled JSON rather than filesystem access.",
+      "Host startup, process shutdown, deployment packaging, internal log formatting, and platform transport error causes can differ while preserving the public contract.",
+      "JSON object order and insignificant whitespace can differ except where exact numeric lexemes and opaque keys are explicitly preserved."
+    ],
+    "not_allowed": [
+      "Different routing or disclosure merely because one host uses JavaScript numbers or UTF-16 strings.",
+      "Different public schema, authentication, registry validation, fallback policy, usage overflow handling, redirect policy, or resource bounds.",
+      "Treating serverless execution as permission to ignore cancellation or disclose raw upstream errors."
+    ]
+  },
+  "invariants": [
+    {
+      "id": "api.native-only",
+      "guarantee": "Expose POST /v1/systemone and GET /v1/models with the automatic route named by the registry's required name and direct configured backend-ID aliases, using the pinned native SystemOne request/response contract. The catalogue lists that automatic route first, then backend IDs in sorted order. There is no implicit project-name alias. Choice, Noul and Score remain native questions. Reject unsupported models and invalid requests. Errors retain the canonical detail array without raw transport/backend causes; upstream 400, 401 and 403 map to gateway 502 upstream_rejected, while upstream 422 stays 422. Upstream 407 maps to gateway 502 upstream_unavailable, matching Fetch hosts that expose proxy authentication as a network failure. Upstream error bodies need not themselves conform to the public error schema. Authenticated GET /v1/capabilities is a version-1 discovery extension, separate from the official SDK shapes. It lists backend aliases and their declared capabilities only, never URLs or credentials. Null capabilities means unknown. Catalogue release_date for aliases is the date alias support was introduced, not an upstream checkpoint release claim.",
+      "sources": [
+        "schema/typesafe.openapi.json",
+        "schema/source.json"
+      ]
+    },
+    {
+      "id": "config.strict-registry",
+      "guarantee": "Reject unknown registry fields, invalid or duplicate backend IDs, invalid backend URLs and unusable credentials. name, selector and backends are required; fallback, escalation_confidence and selection are optional. name is a nonempty string using only ASCII letters, digits, underscores or hyphens and must differ from every backend ID. Missing, null, nonstring, empty or invalid names fail startup; there is no default name or implicit one-system alias. selection contains questions_file, escalate_to and rules of question, optional choice and above. It requires configured fallback, different configured escalate_to, a nonempty valid routing question map and nonempty rules referencing valid questions/choices with thresholds in [0,1]. Limits are max_characters (positive integer), max_non_ascii_letter_fraction ([0,1]), max_questions (positive integer) and max_criteria (integer at least 2). Backend credential values come only from each backend's named binding/environment variable, not public request data. Only the configured automatic route name is reserved against backend-ID collisions. Optional capabilities require a nonempty unique question_types subset of choice/score/noul; optional max_questions, min_criteria and max_criteria are positive integers, min_criteria <= max_criteria, and structured_state is boolean. Omitted/null capability fields are unknown. Unknown capability fields fail startup.",
+      "sources": [
+        "main.go",
+        "examples/routing.questions.json"
+      ],
+      "review_note": "Registry policy includes selection/rules and every limit, not only backend URLs. Runtime registry files may contain sensitive operational data; do not attach them to external reviews."
+    },
+    {
+      "id": "routing.single-eligible-direct",
+      "guarantee": "Compute eligibility before any selection inference. With exactly one eligible backend, skip selection and send the original questions/state directly to that backend with only the model rewritten, EVEN when that backend is not fallback. escalation_confidence and feature rules gate model-based selection only, not singleton dispatch."
+    },
+    {
+      "id": "routing.selector-disclosure",
+      "guarantee": "Legacy selection passes raw caller state only when selector equals fallback. Otherwise its state contains question_definitions in sorted question-ID order and input_summary, not original state. Capability descriptions belong in selection criteria only. Summary counts Unicode code points of compacted original state JSON, and rounds the fraction of non-ASCII Unicode letters among all Unicode letters to two decimal places (zero when no letters).",
+      "privacy_boundary": "Omitting original state is not a guarantee of anonymity. Question definitions and instructions may contain interpolated private data; summaries reveal size/script metadata. Backend trust is an operator decision, not inferred from a backend name.",
+      "source_artifacts": [
+        "contract/backend-selection.question.json"
+      ]
+    },
+    {
+      "id": "routing.task-feature-rules",
+      "guarantee": "Feature selection sends state {request: taskText}, where taskText joins caller question instructions in sorted-ID order with spaces, and asks the versioned routing question artifact. Default destination is fallback; any rule value strictly greater than above escalates to escalate_to. Choice uses the probability for the configured choice, Noul/Score their scalar value. Equality does not escalate. Feature mode uses these rules, not escalation_confidence.",
+      "privacy_boundary": "The selector sees task text even when original state is absent; callers must not interpolate private data into externally routed instructions unless disclosure is intended.",
+      "source_artifacts": [
+        "examples/routing.questions.json"
+      ]
+    },
+    {
+      "id": "routing.fallback-policy",
+      "guarantee": "On a selector call failure use configured fallback; without one propagate a sanitized public error. Legacy selection with confidence below escalation_confidence stays on fallback. There is no retry or fallback after a leaf call fails, and no hidden retry in either runtime. Every fallback remains subject to hard capability checks; reject unsupported_capability instead of substituting another destination."
+    },
+    {
+      "id": "routing.soft-eligibility",
+      "guarantee": "Eligibility uses compacted state code-point length and rounded non-ASCII Unicode-letter fraction, caller question count, and the widest criteria count across Choice objects or Score arrays. Limits exclude backends before selection, but when none remain restore only backends satisfying declared hard capabilities. These are soft routing hints, not a privacy, authorization, or hard safety boundary. Rules/fallback may choose outside soft preferences but must still satisfy hard capabilities."
+    },
+    {
+      "id": "transport.lossless-json",
+      "guarantee": "Preserve opaque question/criterion keys and original raw numeric lexemes through leaf requests and returned answers, including large integers, decimals and exponents. Rewrite the leaf request model only. Upstream HTTP requests carry exact UTF-8 Content-Length without chunked transfer encoding, preserving compatibility with local adapters. Usage counts must be nonnegative signed int64 integers; aggregate selector plus leaf usage with overflow checks. No conversion through a host floating-point number may corrupt preserved JSON values."
+    },
+    {
+      "id": "transport.credential-isolation",
+      "guarantee": "Public bearer authentication and backend credentials are independent. Send only a destination's configured key to that destination, never the caller key or another backend key. Do not follow redirects. Do not expose raw causes, secrets or upstream bodies in public errors."
+    },
+    {
+      "id": "transport.bounded-cancelled",
+      "guarantee": "Bound public request, registry/routing artifact and upstream response reads and enforce request deadlines with actual backend cancellation, including caller disconnect/abort. The request and upstream response bound is 8 MiB; registry/routing question artifacts are bounded to 1 MiB. The request deadline is 300 seconds. Host adapters must not merely abandon a still-running fetch."
+    },
+    {
+      "id": "skills.rank-and-verify",
+      "guarantee": "The portable skill-suggestion application uses the official pinned Python SDK 0.7.0 and ordinary SystemOne HTTP via TYPESAFE_ENDPOINT and TYPESAFE_API_KEY with an explicitly supplied model (--model for the CLI). The model may name the configured automatic route or a direct backend; there is no assumed demo or project-name alias. It loads a roster, ranks skill suggestions, then verifies candidates using native questions. No bespoke gateway skill endpoint or mandatory root Torch dependency is introduced. Public examples use synthetic provenance-labelled skills."
+    },
+    {
+      "id": "skills.private-root",
+      "guarantee": "SKILLS_LIBRARY_PATH is an explicit private loader binding only. Do not check in the private corpus or serialize the expanded private root, credentials or accidental traversal/symlink targets. Private use requires allow_private=True or --allow-private explicit opt-in. Roster names/descriptions and selected skill body excerpts may then be sent to the configured reviewer for ranking and verification. Replacing root path spellings is not anonymization of private content; this is an explicit disclosure choice, never permission to send the entire corpus automatically."
+    },
+    {
+      "id": "routing.named-model",
+      "guarantee": "A configured backend ID selects that backend directly, bypassing selection and soft preferences. Only the upstream model field is rewritten; native response identity, answers and usage remain intact. No retry or cross-model fallback. Unknown IDs reject with unsupported_model."
+    },
+    {
+      "id": "routing.hard-capabilities",
+      "guarantee": "Filter automatic candidates by declared question types, question count, per-Choice/Score min/max criteria and string-only state restrictions before soft preferences. Reject unsupported_capability with HTTP 422 if none support the request. Recheck the final destination for every fallback/rule path, and check selector capabilities against its actual routing payload before its HTTP call. No question is dropped, no criteria truncated, and no scores recomputed. Native servers own exact token/context validation; missing capability declarations are unknown, not certification. Inspect exact lowercase type and criteria fields; extra fields cannot override them. Criteria limits apply to Choice and Score, not Noul. These hard constraints also apply to named backend routes."
+    },
+    {
+      "id": "scope.plumbing-only",
+      "guarantee": "The gateway owns HTTP/API adaptation, authentication, validation and routing. Independent upstream servers own weights, tokenization, trained prompts, scoring, batching, scheduling and device/runtime management. Compatible servers require configuration and fixtures, not model-specific gateway code or mandatory inference dependencies. The optional legacy Laya service is an independent reference example, not part of the gateway contract."
+    },
+    {
+      "id": "integration.evidence-gate",
+      "guarantee": "Integration review uses explicit candidate evidence and versioned native questions through the official SDK. Inference-boundary or semantic violations reject; missing/ambiguous evidence holds. A positive review alone never admits a backend: named-model SDK/native-output probe evidence must match the candidate and target. Readiness applies only to the recorded endpoint/fixtures and does not attest weights, calibration, load behavior or production suitability. The gate never mutates the live registry."
+    }
+  ]
+}

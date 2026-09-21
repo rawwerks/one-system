@@ -1,0 +1,58 @@
+name: Go release verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.1'
+      - name: Build all four platforms
+        run: make package-go BUNDLE_OUT=.build/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-release-assets
+          path: |
+            .build/release/install.sh
+            .build/release/SHA256SUMS
+            .build/release/one-system-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  install:
+    name: Verify installed gateway (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-release-assets
+          path: .build/release
+      - name: Check installer safety boundaries
+        run: node --test verification/install.test.ts
+      - name: Verify archives and exercise the installed native gateway
+        run: make check-go-packages BUNDLE_OUT=.build/release

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "corpus": "roster.json",
+  "kind": "public-synthetic-demonstration",
+  "created_for": "One System portable skill-suggestion application",
+  "contains_private_data": false,
+  "source_roster": null,
+  "upstream_full_data_downloaded": false,
+  "benchmark_claims": false,
+  "algorithm_source": "https://docs.typesafe.ai/cookbooks/skill_suggestion.md",
+  "sdk_source": "https://github.com/typesafe-ai/typesafe-sdk-python/tree/v0.7.0",
+  "scope": "Four original synthetic skill records, not the Hermes catalog, not executable tool integrations, and not evidence of model accuracy.",
+  "identity_policy": "Portable lowercase skill names independent of corpus location; duplicate IDs are errors.",
+  "excerpt_policy": {
+    "normalization": "Normalize CRLF and CR to LF, then strip outer whitespace.",
+    "body_unicode_codepoints": 700,
+    "descriptions": "Complete; never adaptively shortened for a backend.",
+    "rank_candidates": "Every roster entry; no backend-specific candidate dropping.",
+    "verify_candidates": 3,
+    "privacy_order": "Replace private-root spellings before taking the body excerpt."
+  },
+  "algorithm": {
+    "gate": "Mean of acts_on_user_system, would_follow_documented_procedure, and 1-prose_suffices.",
+    "gate_threshold_inclusive": 0.3,
+    "fits_threshold_inclusive": 0.3,
+    "return_rule": "Return the rerank Choice winner when the maximum shortlist fit meets the threshold, even when another candidate has the highest fit."
+  }
+}

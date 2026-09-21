@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "one-system",
+  "main": "dist/worker.js",
+  "compatibility_date": "2026-09-19",
+  "no_bundle": true,
+  "workers_dev": false,
+  "observability": { "enabled": false }
+  // Bind ONE_SYSTEM_API_KEY and every registry api_key_env with wrangler secret.
+  // Bind raw ONE_SYSTEM_CONFIG_JSON, or bundle a registry using the optional
+  // ONE_SYSTEM_WORKER_CONFIG build-time file path. No secrets are build inputs.
+  // Routing questions are bundled; ONE_SYSTEM_QUESTIONS_JSON can supply a map
+  // from question asset names to raw JSON strings at deployment time instead.
+}

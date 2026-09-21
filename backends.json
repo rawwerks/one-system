@@ -1,0 +1,36 @@
+{
+  "name": "routing-demo",
+  "selector": "hosted",
+  "backends": [
+    {
+      "id": "local",
+      "base_url": "http://127.0.0.1:8091",
+      "model": "laya-english",
+      "api_key_env": "LOCAL_API_KEY",
+      "description": "Local CPU Laya, an English-only 421M decision model. Prefer for short, straightforward English classification, sentiment, intent, explicit yes/no facts, and simple ordinal rubrics. Runs on this machine. At most 16 questions; Choice/Score require at least 2 options. Each option must fit 48 tokenizer tokens, the question head 192 tokens, and the full question plus state 512 tokens. Literal [MASK] tokens are unsupported. Not suitable for non-English text, long inputs, multi-step reasoning, arithmetic, subtle comparisons, or complex structured rubrics.",
+      "limits": {
+        "max_characters": 1200,
+        "max_non_ascii_letter_fraction": 0.02,
+        "max_questions": 16,
+        "max_criteria": 20
+      },
+      "capabilities": {
+        "question_types": [
+          "choice",
+          "score",
+          "noul"
+        ],
+        "max_questions": 16,
+        "min_criteria": 2,
+        "structured_state": true
+      }
+    },
+    {
+      "id": "hosted",
+      "base_url": "https://api.typesafe.ai",
+      "model": "jev-latest",
+      "api_key_env": "TYPESAFE_API_KEY",
+      "description": "Hosted TypeSafe Jev. Prefer for non-English or multilingual text, longer inputs, multi-step reasoning, arithmetic, subtle comparisons, and nuanced or complex structured rubrics. Use the local model for straightforward short English decisions it can handle."
+    }
+  ]
+}

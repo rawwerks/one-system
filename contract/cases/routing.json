@@ -1,0 +1,25 @@
+{
+  "invariants": ["routing.selector-disclosure", "routing.task-feature-rules", "routing.soft-eligibility", "routing.fallback-policy"],
+  "request": {"model":"routing-demo", "state":"PRIVATE_STATE_CANARY", "questions":{"z":{"type":"noul","instructions":"Zulu task"},"a":{"type":"noul","instructions":"Alpha task"}}},
+  "leaf_response": {"model":"resolved-leaf", "answers":{"z":{"type":"noul","noul":0.7},"a":{"type":"noul","noul":0.9}},"usage":{"input_tokens":11,"output_tokens":3}},
+  "expected_summary": {"characters":22,"non_ascii_letter_fraction":0},
+  "expected_definitions": [{"type":"noul","instructions":"Alpha task"},{"type":"noul","instructions":"Zulu task"}],
+  "expected_task": {"request":"Alpha task Zulu task"},
+  "feature_questions": {
+    "domain":{"type":"choice","instructions":"Which task domain?","criteria":{"complex":"Requires reasoning","simple":"Simple matching"}},
+    "reasoning":{"type":"noul","instructions":"Does this task require reasoning?"},
+    "difficulty":{"type":"score","instructions":"Rate task difficulty","criteria":["Simple","Hard"]}
+  },
+  "feature_cases": [
+    {"name":"strict-equality-stays-private","choice_probability":0.5,"noul":0.5,"score":0.5,"expected_destination":"local"},
+    {"name":"choice-probability-not-selected-label-or-confidence","choice_probability":0.5001,"noul":0.1,"score":0.1,"expected_destination":"remote"},
+    {"name":"noul-rule-escalates","choice_probability":0.1,"noul":0.5001,"score":0.1,"expected_destination":"remote"},
+    {"name":"score-rule-escalates","choice_probability":0.1,"noul":0.1,"score":0.5001,"expected_destination":"remote"}
+  ],
+  "metrics": [
+    {"name":"compact-object-unicode-codepoints","state": { "m" : "éa界😀 9" }, "expected_summary":{"characters":14,"non_ascii_letter_fraction":0.5}},
+    {"name":"combining-mark-and-astral-not-letters","state":"é😀界","expected_summary":{"characters":6,"non_ascii_letter_fraction":0.5}},
+    {"name":"fraction-rounded-two-places","state":"éaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_summary":{"characters":33,"non_ascii_letter_fraction":0.03}},
+    {"name":"no-letters","state":[123,"😀"],"expected_summary":{"characters":9,"non_ascii_letter_fraction":0}}
+  ]
+}

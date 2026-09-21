@@ -1,0 +1,19 @@
+{
+  "invariants": ["api.native-only", "transport.credential-isolation"],
+  "cases": [
+    {"name":"missing-auth","method":"POST","path":"/v1/systemone","authorization":"","body":"{}","status":401,"type":"unauthorized","authenticate":"Bearer"},
+    {"name":"wrong-auth","method":"GET","path":"/v1/models","authorization":"Bearer WRONG_KEY_CANARY","body":"","status":401,"type":"unauthorized","authenticate":"Bearer"},
+    {"name":"wrong-method","method":"GET","path":"/v1/systemone","authorization":"valid","body":"","status":405,"type":"method_not_allowed","allow":"POST"},
+    {"name":"models-wrong-method","method":"POST","path":"/v1/models","authorization":"valid","body":"{}","status":405,"type":"method_not_allowed","allow":"GET"},
+    {"name":"auth-before-method","method":"DELETE","path":"/v1/models","authorization":"","body":"","status":401,"type":"unauthorized","authenticate":"Bearer"},
+    {"name":"no-custom-endpoints","method":"POST","path":"/v1/suggest-skills","authorization":"valid","body":"{}","status":404,"type":"not_found"},
+    {"name":"unknown-route-before-auth","method":"GET","path":"/unknown","authorization":"","body":"","status":404,"type":"not_found"},
+    {"name":"no-trailing-slash-alias","method":"POST","path":"/v1/systemone/","authorization":"valid","body":"{}","status":404,"type":"not_found"},
+    {"name":"malformed-json","method":"POST","path":"/v1/systemone","authorization":"valid","body":"{PRIVATE_STATE_CANARY","status":422,"type":"schema_validation"},
+    {"name":"trailing-document","method":"POST","path":"/v1/systemone","authorization":"valid","body":"{} {}","status":422,"type":"schema_validation"},
+    {"name":"null-state","method":"POST","path":"/v1/systemone","authorization":"valid","body":"{\"model\":\"routing-demo\",\"state\":null,\"questions\":{\"q\":{\"type\":\"noul\"}}}","status":422,"type":"schema_validation"},
+    {"name":"empty-questions","method":"POST","path":"/v1/systemone","authorization":"valid","body":"{\"model\":\"routing-demo\",\"state\":\"PRIVATE_STATE_CANARY\",\"questions\":{}}","status":422,"type":"schema_validation"},
+    {"name":"invalid-question-kind","method":"POST","path":"/v1/systemone","authorization":"valid","body":"{\"model\":\"routing-demo\",\"state\":\"x\",\"questions\":{\"q\":{\"type\":\"boolean\"}}}","status":422,"type":"schema_validation"},
+    {"name":"unknown-model","method":"POST","path":"/v1/systemone","authorization":"valid","body":"{\"model\":\"unknown-route\",\"state\":\"x\",\"questions\":{\"q\":{\"type\":\"noul\"}}}","status":422,"type":"unsupported_model"}
+  ]
+}

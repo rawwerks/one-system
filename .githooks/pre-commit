@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+# Installed by make setup-hooks. A global core.hooksPath does not dispatch here.
+exec gitleaks git --pre-commit --staged --redact

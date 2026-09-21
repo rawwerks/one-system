@@ -1,0 +1,371 @@
+{
+  "paths": {
+    "ignored": [
+      ".env",
+      ".env.production",
+      ".env.example.bak",
+      "hono/.env",
+      "hono/.env.example",
+      "hono/.dev.vars",
+      "hono/.dev.vars.production",
+      ".secrets/key",
+      "tls/server.key",
+      "tls/server.pem",
+      ".local/backends.json",
+      ".local/roster.json",
+      "private/request.json",
+      "scratch/run.jsonl",
+      "logs/server.jsonl",
+      "sessions/agent.jsonl",
+      "evidence/local/request.json",
+      "backends.local.json",
+      "examples/private.local.backends.json",
+      "models/config.json",
+      "checkpoints/config.json",
+      "weights/model.safetensors",
+      "weights/model.pt",
+      "weights/model.pth",
+      "weights/model.ckpt",
+      "weights/model.gguf",
+      ".venv/bin/python",
+      "venv/bin/python",
+      "examples/__pycache__/x.pyc",
+      ".ruff_cache/check",
+      ".pytest_cache/check",
+      ".mypy_cache/check",
+      ".coverage",
+      "coverage/result.json",
+      "htmlcov/index.html",
+      ".build/example-venv/bin/python",
+      "bin/one-system",
+      "one-system",
+      ".true-up/graph.json",
+      "hono/node_modules/hono/package.json",
+      "hono/dist/node.js",
+      "hono/src/generated/schema.ts",
+      "hono/bun.lock",
+      "hono/.wrangler/state.json",
+      ".cache/model.json",
+      "server.log",
+      "codedb.snapshot",
+      ".jj/repo/store/data",
+      ".worktrees/agent/file",
+      ".slb/state.db",
+      ".slb/state.db-wal",
+      ".stignore",
+      ".stignore-shared",
+      ".stfolder/marker",
+      ".stversions/source.go",
+      "source.sync-conflict-20260920-123456.go"
+    ],
+    "trackable": [
+      ".env.example",
+      ".githooks/pre-commit",
+      ".github/workflows/conformance.yml",
+      ".true-up.json",
+      "mise.toml",
+      "go.mod",
+      "go.sum",
+      "uv.lock",
+      "examples/requirements.lock",
+      "hono/package-lock.json",
+      "backends.json",
+      "examples/privacy.backends.json",
+      "contract/invariants.json",
+      "examples/routing.questions.json",
+      "examples/skills/roster.json",
+      "schema/typesafe.openapi.json",
+      "hono/src/app.ts",
+      "hono/scripts/generate.mjs",
+      "adapters/laya.py",
+      "evidence/continuation-2026-09-20.json",
+      "CONTRIBUTING.md"
+    ]
+  },
+  "age": [
+    {
+      "id": "exact-boundary",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "2026-09-17T18:00:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 0
+    },
+    {
+      "id": "inside-boundary",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "2026-09-17T18:00:00.000001Z"
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "offset-instant",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "2026-09-17T14:00:00-04:00"
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 0
+    },
+    {
+      "id": "every-artifact",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "2026-09-01T00:00:00Z"
+              },
+              {
+                "upload-time": "2026-09-20T00:00:00Z"
+              }
+            ],
+            "sdist": {
+              "upload-time": "2026-09-20T01:00:00Z"
+            }
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 2
+    },
+    {
+      "id": "null-time",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": null
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "invalid-time",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "not-a-time"
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "naive-time",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "2026-09-01T00:00:00"
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "numeric-time",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": 123
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "missing-time",
+      "lock": {
+        "package": [
+          {
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {}
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "no-artifacts",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": []
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "virtual-project",
+      "lock": {
+        "package": [
+          {
+            "name": "project",
+            "source": {
+              "virtual": "."
+            }
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 0
+    },
+    {
+      "id": "unsupported-source",
+      "lock": {
+        "package": [
+          {
+            "name": "project",
+            "source": {
+              "git": "https://example.invalid/repo"
+            }
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "no-packages",
+      "lock": {},
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "empty-packages",
+      "lock": {
+        "package": []
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "invalid-package",
+      "lock": {
+        "package": [
+          null
+        ]
+      },
+      "now": "2026-09-20T18:00:00+00:00",
+      "errors": 1
+    },
+    {
+      "id": "naive-clock",
+      "lock": {
+        "package": [
+          {
+            "name": "example",
+            "version": "1.0",
+            "source": {
+              "registry": "https://pypi.org/simple"
+            },
+            "wheels": [
+              {
+                "upload-time": "2026-09-01T00:00:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      "now": "2026-09-20T18:00:00",
+      "errors": 0,
+      "raises": true
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+# Credentials: only the reviewed, blank root template is shareable.
+.env
+.env.*
+!/.env.example
+.dev.vars*
+.secrets/
+*.pem
+*.key
+
+# Private registries, corpora, requests, sessions, and experiment results.
+# Keep new local artifacts in one of these directories instead of evidence/.
+/.local/
+/private/
+/scratch/
+/logs/
+/sessions/
+/evidence/local/
+*.local.json
+*.local.backends.json
+
+# Optional Laya checkpoint weights and model caches are supplied separately.
+/models/
+/checkpoints/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+
+# Python environments, caches, and test output.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+
+# Regenerable binaries, dependency trees, and local tooling state.
+/bin/
+/one-system
+/.build/
+/.true-up/
+node_modules
+.cache/
+.direnv/
+*.log
+/codedb.snapshot
+/.jj/
+/.slb/
+/.worktrees/
+
+# Syncthing metadata, archived versions, and unresolved conflict copies.
+.stfolder/
+.stignore
+.stignore-shared
+.stversions/
+*.sync-conflict-*
+
+# Desktop metadata.
+.DS_Store
+Thumbs.db

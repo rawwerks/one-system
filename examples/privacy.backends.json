@@ -1,0 +1,48 @@
+{
+  "name": "privacy-demo",
+  "selector": "local",
+  "fallback": "local",
+  "selection": {
+    "questions_file": "examples/routing.questions.json",
+    "escalate_to": "hosted",
+    "rules": [
+      {
+        "question": "domain",
+        "choice": "math_or_logic",
+        "above": 0.5
+      }
+    ]
+  },
+  "backends": [
+    {
+      "id": "local",
+      "base_url": "http://127.0.0.1:8091",
+      "model": "laya-english",
+      "api_key_env": "LOCAL_API_KEY",
+      "description": "short simple English text, basic sorting, yes or no, ratings",
+      "limits": {
+        "max_characters": 1200,
+        "max_non_ascii_letter_fraction": 0.02,
+        "max_questions": 16,
+        "max_criteria": 20
+      },
+      "capabilities": {
+        "question_types": [
+          "choice",
+          "score",
+          "noul"
+        ],
+        "max_questions": 16,
+        "min_criteria": 2,
+        "structured_state": true
+      }
+    },
+    {
+      "id": "hosted",
+      "base_url": "https://api.typesafe.ai",
+      "model": "jev-latest",
+      "api_key_env": "TYPESAFE_API_KEY",
+      "description": "other languages, long documents, arithmetic, multi-step reasoning"
+    }
+  ]
+}

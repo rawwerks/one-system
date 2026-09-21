@@ -1,0 +1,21 @@
+{
+  "name": "simple-jev-demo",
+  "selector": "simple-jev",
+  "backends": [
+    {
+      "id": "simple-jev",
+      "base_url": "https://simple-jev-demo-api.featherless.ai",
+      "model": "featherless-ai/Qwen3.6-35B-A3B-classifier",
+      "api_key_env": "SIMPLE_JEV_API_KEY",
+      "description": "External Simple Jev demo, Choice and Score only. Confidence is maximum candidate probability, not calibrated correctness. Public demo availability and model revisions can change. Noul is excluded because its graded support semantics differ.",
+      "capabilities": {
+        "question_types": [
+          "choice",
+          "score"
+        ],
+        "min_criteria": 2,
+        "max_criteria": 50
+      }
+    }
+  ]
+}

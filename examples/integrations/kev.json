@@ -1,0 +1,18 @@
+{
+  "id": "kev",
+  "question_types": [
+    "choice",
+    "score",
+    "noul"
+  ],
+  "use_case": "Use an independently hosted Kev native pointer-head decision server through the same SDK and gateway as other backends.",
+  "proposal": "Register its existing /v1/systemone endpoint. Keep weights, custom attention masks, readout, tokenization, batching and all PyTorch dependencies upstream. Preserve state, question IDs, option mappings and native confidence. No automatic fallback. Native server validates tokenizer-specific capacity. No universal calibration claim.",
+  "evidence": [
+    {
+      "url": "https://github.com/jaredpalmer/kev/blob/a955202be6bc70bca56d916b3250326143f2e3ec/README.md",
+      "revision": "a955202be6bc70bca56d916b3250326143f2e3ec",
+      "facts": "Documents /v1/systemone, official TypeSafeClient with kev-latest, Choice argmax and full distribution, Score expected rubric index, and Noul p[yes]. Choice confidence adjusts maximum probability against chance; Score confidence is an approximation. Question IDs are not model inputs. Structured values are rendered upstream."
+    }
+  ],
+  "validation": "Source inspection only. No Kev endpoint was supplied or tested. Checkpoint revision, running server identity, runtime limits and SDK/output parity must be established before opting in."
+}

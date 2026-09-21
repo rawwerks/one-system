@@ -1,0 +1,55 @@
+name: Optional Laya adapter
+
+# Optional hosted coverage, requested explicitly; routine checking is local.
+# The adapter lock remains subject to the 72-hour package cooldown.
+on:
+  workflow_dispatch:
+    inputs:
+      bypass_package_cooldown:
+        description: 'Authorize installing the committed lock before its 72-hour cooldown expires'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  adapter:
+    name: CPU adapter and optional MLX (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      UV_EXCLUDE_NEWER: ${{ github.event_name == 'workflow_dispatch' && inputs.bypass_package_cooldown && 'false' || '3 days' }}
+      BYPASS_PACKAGE_COOLDOWN: ${{ github.event_name == 'workflow_dispatch' && inputs.bypass_package_cooldown && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.27'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.1'
+      - name: Install optional CPU adapter
+        run: |
+          if [ "$BYPASS_PACKAGE_COOLDOWN" = 1 ]; then
+            echo 'Explicit cooldown override: installing committed versions from uv.lock without resolving updates.' | tee -a "$GITHUB_STEP_SUMMARY"
+            printf 'Authorized by %s for %s (%s).\n' "$GITHUB_ACTOR" "$GITHUB_SHA" "$GITHUB_REF" | tee -a "$GITHUB_STEP_SUMMARY"
+            uv sync --frozen --python 3.12
+          else
+            make setup-laya
+          fi
+      - name: Collect adapter startup observations without a checkpoint
+        run: make check-laya-startup
+      - name: Exercise macOS MLX imports and CPU tensor operations
+        if: runner.os == 'macOS'
+        run: |
+          if [ "$BYPASS_PACKAGE_COOLDOWN" = 1 ]; then
+            uv sync --frozen --python 3.12 --extra mlx
+          else
+            make setup-laya-mlx
+          fi
+          LAYA_RUNTIME=mlx make check-laya-startup

@@ -1,0 +1,89 @@
+#!/bin/sh
+set -eu
+
+# Hosted workflows run only on request, so this is the routine gate: the tip
+# commit of every pushed branch or tag must pass the local suite first. The suite
+# runs in a clean detached checkout, so uncommitted work is neither tested nor
+# touched. A tree that has passed the same targets is not checked again. Anything
+# that cannot be checked blocks the push. ONE_SYSTEM_SKIP_PRE_PUSH=1 skips only
+# validation for one push; say so in review. Notes must remain local regardless.
+# Git --no-verify and jj git push do not enforce hooks; never publish notes with
+# either. Run make check-commit before jj git push.
+
+# Consume push input once, before any validation override or checkout. Only
+# branch/tag object IDs are needed later; note deletions remain allowed.
+set --
+while read -r local_ref local_sha remote_ref _ || [ -n "${remote_ref:-}" ]; do
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+  case "$local_ref:$remote_ref" in
+    refs/notes/*|*:refs/notes/*)
+      echo 'pre-push: push blocked; Git notes must remain local. Only note deletions may be pushed.' >&2
+      exit 1
+      ;;
+  esac
+  case "$remote_ref" in
+    refs/heads/*|refs/tags/*) set -- "$@" "$local_sha" ;;
+  esac
+done
+
+if [ "${ONE_SYSTEM_SKIP_PRE_PUSH:-0}" = 1 ]; then
+  echo 'pre-push: local checks skipped (ONE_SYSTEM_SKIP_PRE_PUSH=1).' >&2
+  exit 0
+fi
+
+suite=${ONE_SYSTEM_PRE_PUSH_TARGETS:-default}
+checkouts=${ONE_SYSTEM_PRE_PUSH_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/one-system/pre-push}
+git_dir=$(git rev-parse --absolute-git-dir)
+passed=$(git rev-parse --path-format=absolute --git-common-dir)/one-system-pre-push-passed
+# Git exports its repository variables to hooks; they would redirect every git
+# command the suite runs in its own fixtures. The hook's directory is not always
+# the repository, so name the repository explicitly from here on.
+unset $(git rev-parse --local-env-vars)
+repo() { git --git-dir="$git_dir" "$@"; }
+
+checkout=
+cleanup() {
+  # Never prune: that would drop other worktrees whose directory is briefly absent.
+  [ -z "$checkout" ] || repo worktree remove --force "$checkout" >/dev/null 2>&1 || rm -rf "$checkout"
+  checkout=
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Resolve and deduplicate trees only after every destination passed the note guard.
+pending=
+for local_sha do
+  tree=$(repo rev-parse --verify --quiet "$local_sha^{tree}") || {
+    echo "pre-push: push blocked; cannot resolve $local_sha, so it cannot be checked." >&2
+    exit 1
+  }
+  case " $pending " in *" $tree:"*) continue ;; esac
+  if [ -f "$passed" ] && grep -qxF "$tree $suite" "$passed"; then continue; fi
+  pending="$pending $tree:$local_sha"
+done
+
+for entry in $pending; do
+  tree=${entry%%:*}
+  sha=${entry#*:}
+  mkdir -p "$checkouts"
+  checkout=$(mktemp -d "$checkouts/XXXXXX")
+  repo worktree add --detach --quiet "$checkout" "$sha"
+  targets=$suite
+  if [ "$suite" = default ]; then
+    targets='setup-dev check-push'
+    # A branch that predates check-push is held to the aggregate it does have.
+    grep -q '^check-push:' "$checkout/Makefile" || targets='setup-dev check-dev'
+  fi
+  echo "pre-push: checking $sha with make $targets" >&2
+  [ ! -f "$checkout/.gitmodules" ] || git -C "$checkout" submodule update --init --recursive --quiet
+  runner=
+  if [ -f "$checkout/mise.toml" ] && command -v mise >/dev/null 2>&1; then runner='mise exec --'; fi
+  # shellcheck disable=SC2086
+  if ! (cd "$checkout" && $runner make $targets) </dev/null >&2; then
+    echo "pre-push: push blocked; make $targets failed for $sha. Reproduce with: git worktree add --detach <dir> $sha" >&2
+    exit 1
+  fi
+  echo "$tree $suite" >> "$passed"
+  cleanup
+done

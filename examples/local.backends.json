@@ -1,0 +1,23 @@
+{
+  "name": "local-demo",
+  "selector": "local",
+  "backends": [
+    {
+      "id": "local",
+      "base_url": "http://127.0.0.1:8091",
+      "model": "laya-english",
+      "api_key_env": "LOCAL_API_KEY",
+      "description": "Local English Laya using the configured CPU or MLX runtime. No hosted backend.",
+      "capabilities": {
+        "question_types": [
+          "choice",
+          "score",
+          "noul"
+        ],
+        "max_questions": 16,
+        "min_criteria": 2,
+        "structured_state": true
+      }
+    }
+  ]
+}

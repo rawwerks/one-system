@@ -1,0 +1,16 @@
+{
+  "id": "library-only-extractor",
+  "question_types": [
+    "choice"
+  ],
+  "use_case": "Negative control for the admission gate, not a real integration proposal.",
+  "proposal": "Import an entity-extraction library into the gateway, load its checkpoint, choose GPU device, tokenize documents and turn span scores into a Choice distribution by renormalization.",
+  "evidence": [
+    {
+      "url": "https://example.invalid/synthetic-negative-control",
+      "revision": "synthetic-v1",
+      "facts": "Synthetic test: no external server or typed-decision contract exists. Gateway would own inference and invent classification semantics."
+    }
+  ],
+  "validation": "Deliberately out of scope. This card tests rejection, not any real project."
+}

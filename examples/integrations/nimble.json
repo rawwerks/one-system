@@ -1,0 +1,18 @@
+{
+  "id": "nimble",
+  "question_types": [
+    "choice",
+    "score",
+    "noul"
+  ],
+  "use_case": "Reach an independently deployed Nimble SGLang decision endpoint without teaching the gateway its trained prompt format.",
+  "proposal": "HTTP passthrough to the existing /v1/systemone. All SGLang and NimbleCompiler work remains upstream. Declare 2-26 criteria and 64 questions. Preserve question IDs and option order exactly; explicitly disclose that these affect inference. Preserve entropy confidence; do not assert calibration or semantic equivalence under ID renaming. Native endpoint enforces token limits. No fallback or compiler reimplementation.",
+  "evidence": [
+    {
+      "url": "https://github.com/bespokelabsai/nimble/blob/35fe1f4fdbc64fa3dbbf5ac0042f3f5680c1ad28/nimble/serving/server.py",
+      "revision": "35fe1f4fdbc64fa3dbbf5ac0042f3f5680c1ad28",
+      "facts": "Imports openjev application factory, SGLang client and evaluation service. Exposes the decision endpoint and nimble-latest alias. Documents Choice/Noul/Score, 26 candidates, 64 questions, entropy concentration confidence and question IDs/keys in the trained prompt. Checks prompt source hash against checkpoint contract."
+    }
+  ],
+  "validation": "Source inspection only. No Nimble endpoint supplied or tested. Pin the checkpoint and runtime independently; test native parity and characterize ID/order behavior."
+}

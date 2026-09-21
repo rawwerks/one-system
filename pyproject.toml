@@ -1,0 +1,29 @@
+[project]
+name = "one-system"
+version = "0.2.0"
+description = "Local CPU and MLX Laya adapter for the official TypeSafe System One HTTP API"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "laya==0.3.3",
+    "torch==2.14.0; sys_platform == 'darwin'",
+    "torch==2.14.0+cpu; sys_platform != 'darwin'",
+    "transformers==5.17.0",
+    "huggingface-hub==1.31.0",
+    "jsonschema>=4.23,<5",
+]
+
+[project.optional-dependencies]
+mlx = ["laya-mlx==0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv]
+package = false
+exclude-newer = "3 days"
+
+[tool.uv.sources]
+# macOS CPU support ships in the regular PyPI wheel, without a +cpu suffix.
+torch = { index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

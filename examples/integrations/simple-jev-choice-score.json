@@ -1,0 +1,27 @@
+{
+  "id": "simple-jev",
+  "question_types": [
+    "choice",
+    "score"
+  ],
+  "use_case": "Connect an independently operated conventional causal-model decision HTTP service, including the public Simple Jev demo, without implementing any model execution in this project.",
+  "proposal": "HTTP passthrough limited to Choice and Score, with 2-50 criteria. Reject Noul at the gateway because this server computes graded support rather than binary P(yes). Preserve maximum-candidate-probability confidence and document its definition. Do not recalibrate, normalize, rename IDs, truncate, or fall back. The upstream owns all prompts, scoring, model resources and context validation.",
+  "evidence": [
+    {
+      "url": "https://github.com/featherless-ai/simple-jev/blob/7cba7d121980e6a230477afa808ea0da0a7719e8/README.md",
+      "revision": "7cba7d121980e6a230477afa808ea0da0a7719e8",
+      "facts": "Documents /v1/systemone as an alias of /v1/classifier, Choice/Score with 2-50 candidates and max-probability confidence. Score is an expected zero-based rubric position. Noul is a support value from nine rating tokens; it is excluded from this proposal. The documented free demo has an independent HTTPS serving endpoint."
+    },
+    {
+      "url": "https://simple-jev-demo-api.featherless.ai/v1/models",
+      "observed_at": "2026-09-20",
+      "facts": "Live listing includes featherless-ai/Qwen3.6-35B-A3B-classifier. A synthetic mixed Choice/Score POST to /v1/systemone parsed using official typesafe-sdk 0.7.0; named-model gateway output matched the direct native response exactly, including model, full probabilities, confidence, expected score, legend and usage. No wire translation was required. This observation does not attest the running checkpoint revision or every possible input."
+    }
+  ],
+  "validation": "One preliminary fixture passed through Go on 2026-09-20. The admission probe must be rerun against this frozen candidate and target. Confidence semantics remain max probability. Only Choice and Score are proposed; Noul is excluded. Broader capacity, concurrency, accuracy and revision claims are unverified.",
+  "target": {
+    "endpoint": "https://simple-jev-demo-api.featherless.ai",
+    "model": "featherless-ai/Qwen3.6-35B-A3B-classifier",
+    "response_model": "featherless-ai/Qwen3.6-35B-A3B-classifier"
+  }
+}

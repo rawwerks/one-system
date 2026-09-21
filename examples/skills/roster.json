@@ -1,0 +1,30 @@
+[
+  {
+    "id": "notes-organize",
+    "category": "personal-information",
+    "description": "Create and organize notes in a local notebook.",
+    "description_full": "Create, rename, and organize text notes in a local notebook. Use for requests to save information into notes or move notes between folders, not for general writing advice or slide creation.",
+    "body": "Confirm which notebook and folder the user means. Inspect the existing note titles before creating a new note to avoid duplicates. Draft the requested content, save it in the selected folder, and read the saved note back to verify it. Do not access accounts or publish notes online. This is a synthetic procedure for a demonstration, not an installed notebook integration."
+  },
+  {
+    "id": "slides-author",
+    "category": "documents",
+    "description": "Author a new presentation using a supplied outline or template.",
+    "description_full": "Build a new slide deck from an outline, audience, and optional template. Use when the main task is authoring new slides; use a slide-editing skill instead when modifying an existing deck without rebuilding it.",
+    "body": "Ask for the intended audience and outcome if they are missing. Turn the outline into slide titles and one central message per slide. Reuse the supplied template rather than inventing branding. Cite any supplied figures in speaker notes. Save a new deck without replacing the source template, render a preview, and inspect every slide for overflow. This synthetic demonstration does not provide presentation software."
+  },
+  {
+    "id": "slides-edit",
+    "category": "documents",
+    "description": "Edit the text and layout of an existing presentation.",
+    "description_full": "Modify an existing slide deck while preserving its theme, speaker notes, and unrelated content. Suitable for replacing text, rearranging slides, and correcting layouts, not for authoring a fresh presentation from an outline.",
+    "body": "Open a copy of the supplied deck and identify the slides the user named. Record their current content before changing it. Make only the requested edits, preserve the theme and notes, then compare rendered before-and-after slides. Save the edited copy separately. This is a public synthetic workflow and contains no private document names or real account integration."
+  },
+  {
+    "id": "tables-audit",
+    "category": "data",
+    "description": "Audit a delimited data table for missing values and duplicates.",
+    "description_full": "Inspect a supplied CSV or TSV table for missing required values, duplicate records, and inconsistent columns. Report observed problems without silently deleting rows or modifying the original data. Does not manage notes or presentations.",
+    "body": "Read the header and confirm the delimiter. Ask which columns form the record identity if that is ambiguous. Count missing values by column and repeated identities, preserving the original row numbers. Produce a concise report with reproducible checks. Never overwrite the input table. The workflow is synthetic and deliberately contains no customer records."
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "state": "The customer says: I was charged twice. Please refund the duplicate payment.",
+      "questions": {
+        "department": {
+          "type": "choice",
+          "instructions": "Which department handles this request?",
+          "criteria": {
+            "billing": "Payments and refunds",
+            "technical": "Software errors"
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is the request based only on explicit wording?",
+          "criteria": [
+            "Routine request",
+            "Urgent request"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "one-system-hono",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25", "npm": ">=11 <12" },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check": "node scripts/generate.mjs && tsc --noEmit",
+    "build": "node scripts/generate.mjs && tsc --noEmit && node scripts/build.mjs",
+    "build:worker": "node scripts/generate.mjs && tsc --noEmit && node scripts/build.mjs --worker",
+    "check-worker": "node scripts/generate.mjs && tsc --noEmit && node scripts/build.mjs --worker && wrangler deploy --dry-run --outdir dist/deploy",
+    "start": "node dist/node.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "hono": "4.13.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "ajv": "8.20.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "wrangler": "4.133.0"
+  }
+}
