@@ -10,16 +10,10 @@ The installer selects macOS amd64 or arm64 and checks that macOS is at least 13.
 Use a native terminal on Apple Silicon; a terminal under Rosetta can report
 `x86_64` and select the Intel binary.
 
-Download and run the installer:
+Install:
 
 ```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh -o "$f" && sh "$f")
-```
-
-An authenticated GitHub CLI works as well:
-
-```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && gh release download --repo github.com/rawwerks/one-system --pattern install.sh --output "$f" --clobber && sh "$f")
+curl -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh | sh
 ```
 
 Review [the installer](../scripts/install.sh) before executing downloaded code.

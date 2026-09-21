@@ -23,24 +23,18 @@ contains private information.
 
 ## Get started
 
-Install the complete Go bundle with one command on Linux or macOS (amd64/arm64):
+Install the gateway on Linux or macOS (amd64/arm64):
 
 ```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh -o "$f" && sh "$f")
+curl -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh | sh
 ```
 
-An authenticated GitHub CLI works as well:
-
-```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && gh release download --repo github.com/rawwerks/one-system --pattern install.sh --output "$f" --clobber && sh "$f")
-```
-
-These commands download the complete installer before executing it. Review
-[the installer](scripts/install.sh) before trusting it. It verifies the selected
+Review [the installer](scripts/install.sh) before trusting it. It verifies the selected
 archive's checksum, installs under `~/.local/share/one-system`, and creates
 `~/.local/bin/one-system`. It does not use sudo, start services, change shell
 profiles, or overwrite an existing installation or launcher. See
-[installation options](docs/binary-install.md) for pinned versions and local bundles.
+[installation options](docs/binary-install.md) to inspect the installer first, pin a
+version, choose destinations, or install from local bundles.
 
 Then choose your setup guide:
 

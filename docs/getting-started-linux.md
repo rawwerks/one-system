@@ -11,13 +11,7 @@ PyTorch wheels do not support Alpine Linux.
 The installer selects Linux amd64 or arm64 and verifies the complete bundle:
 
 ```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh -o "$f" && sh "$f")
-```
-
-An authenticated GitHub CLI works as well:
-
-```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && gh release download --repo github.com/rawwerks/one-system --pattern install.sh --output "$f" --clobber && sh "$f")
+curl -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh | sh
 ```
 
 No Go, sudo, or model installation is involved. The installer preserves existing

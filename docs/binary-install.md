@@ -7,23 +7,26 @@ sudo, or source checkout is required on the receiving computer.
 
 ## One-line installation
 
-Run:
-
 ```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && curl --proto '=https' --proto-redir '=https' -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh -o "$f" && sh "$f")
+curl -fsSL https://github.com/rawwerks/one-system/releases/latest/download/install.sh | sh
 ```
 
-An authenticated GitHub CLI works as well:
+`curl -f` stops on an HTTP error before anything runs. The installer keeps every
+action inside one function that it calls on its last line, so a download that is
+cut short cannot start an installation.
+
+### Inspect it first
+
+Download the installer, read it, then run it:
 
 ```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && gh release download --repo github.com/rawwerks/one-system --pattern install.sh --output "$f" --clobber && sh "$f")
+curl -fsSLO https://github.com/rawwerks/one-system/releases/latest/download/install.sh
+less install.sh
+sh install.sh
 ```
 
-Both commands download the complete installer before executing it and remove the
-bootstrap temporary file afterward. The `--clobber` flag applies only to that
-newly created temporary file, not an existing installation. Review the installer
-in the repository or download it separately before executing code you do not yet
-trust.
+An authenticated GitHub CLI can fetch it as well, which also works for a private
+fork: `gh release download --repo github.com/rawwerks/one-system --pattern install.sh`.
 
 Default destinations:
 
@@ -62,11 +65,12 @@ sh install.sh --prefix "$HOME/one-system-preview" --bin-dir "$HOME/one-system-pr
 sh install.sh --from /path/to/bundles
 ```
 
-For a fully pinned installation, obtain `install.sh` from the same release tag,
-not the moving latest release, and pass that tag with `--version`. For example:
+Pass the same options through a pipe with `sh -s --`. For a fully pinned
+installation, take `install.sh` from the same release tag, not the moving latest
+release, and pass that tag with `--version`:
 
 ```sh
-(f=$(mktemp) && trap 'rm -f "$f"' EXIT && gh release download v0.2.0 --repo github.com/rawwerks/one-system --pattern install.sh --output "$f" --clobber && sh "$f" --version v0.2.0)
+curl -fsSL https://github.com/rawwerks/one-system/releases/download/v0.2.0/install.sh | sh -s -- --version v0.2.0
 ```
 
 The installed launcher changes into the bundle directory before executing the
