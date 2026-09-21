@@ -188,6 +188,8 @@ def list_history(root: Path, prefixes: list[str], indexed: set[str]) -> tuple[li
         oid, kind, size = line.split(" ")
         if kind == "blob":
             blobs.append({**found[oid], "bytes": int(size)})
+    if not blobs:
+        return [], []  # Only trees were new: every historical blob is already in the index.
     names = sorted({blob["path"] for blob in blobs})
     ignored = set(_git(root, "check-ignore", "--no-index", "-z", "--stdin",
                        stdin="\0".join(names).encode() + b"\0", accept=(0, 1)))

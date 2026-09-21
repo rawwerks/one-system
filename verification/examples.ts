@@ -469,6 +469,19 @@ export async function collectExamples(root: string): Promise<Record[]> {
         !leaked && same(runs.worktree.sentPaths, ['.gitignore', 'kept.txt']) && same(runs.history.sentPaths, ['removed.txt']) && same(runs.history.sentStateFields, ['content', 'lines', 'path'])
         && same(runs.history.ignoredPathsInHistory, ['old.pem']) && same(runs.worktree.ignoredPathsInHistory, []) && runs.worktree.result.exit === 0 && runs.history.result.exit === 1);
     });
+    // A repository whose history adds nothing beyond the index: the state right after a first commit.
+    const single = join(scratch, 'release-single-commit-repo'); mkdirSync(single);
+    const singleGit = (...args: string[]): void => { if (spawnSync('git', ['-c', 'user.name=Synthetic Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: single, env: { PATH: env.PATH, HOME: scratch, GIT_CONFIG_NOSYSTEM: '1' }, timeout: 30_000 }).status !== 0) throw new Error('release_fixture_git_failed'); };
+    singleGit('init', '-q'); mkdirSync(join(single, 'docs'));
+    writeFileSync(join(single, 'docs/only.txt'), 'The only file, committed once.\n');
+    singleGit('add', 'docs'); singleGit('commit', '-q', '-m', 'only');
+    await server(body => ({ body: reply(body) }), async (endpoint, calls) => {
+      const argv = ['--repo', single, '--model', 'routing-demo', '--confirm-send', '--history', '--output', join(scratch, 'release-single-out')];
+      const result = await cli('public_release_review', argv, { TYPESAFE_ENDPOINT: endpoint, TYPESAFE_API_KEY: 'public-loopback-fixture' });
+      const report = existsSync(join(scratch, 'release-single-out', 'report.json')) ? read(join(scratch, 'release-single-out', 'report.json')) : {};
+      record('release.history-nothing-extra', contract, { input: { argv, repository: 'one commit containing docs/only.txt; the index equals that commit, so history holds no blob beyond the index', fixtureRule: 'every Noul is 0.02, so the model reports no findings' }, result: serializableRun(result), sentPaths: calls.map(c => c.body.state.path), historyBlobs: report.totals?.history_blobs ?? null, unreviewed: report.unreviewed ?? null },
+        result.exit === 0 && same(calls.map(c => c.body.state.path), ['docs/only.txt']) && report.totals?.history_blobs === 0 && same(report.unreviewed, {}));
+    });
     const thresholds = { review_threshold: .35, action_threshold: .7, severity_block: 2 };
     const hazards = Object.keys(battery).filter(id => battery[id].type === 'noul');
     const answers = (nouls: ObjectValue, severity = 0, insiders = 0): ObjectValue => ({ ...Object.fromEntries(hazards.map(id => [id, { noul: nouls[id] ?? .02 }])), 'audience.intended_reader': { probabilities: { public_users: 1 - insiders, contributors: 0, insiders_only: insiders, machines: 0 } }, 'severity.exposure': { score: severity } });
