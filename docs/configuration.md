@@ -180,3 +180,108 @@ make serve
 ```
 
 Question instructions and criteria can themselves contain private data. Omitting original state from selection is not anonymization; the chosen leaf receives the full request. The privacy example can still route directly to hosted inference through singleton eligibility. Configure trusted destinations according to the data you intend to disclose.
+
+## Optional decision cache
+
+Caching is disabled until an operator configures storage. Go and Hono on Node
+use `ONE_SYSTEM_CACHE_PATH`, a private local SQLite file; Workers use the
+`ONE_SYSTEM_CACHE_DB` D1 binding. Go and Node can replay each other's entries.
+An explicit deployment epoch is required:
+
+```sh
+ONE_SYSTEM_CACHE_PATH=.local/decisions/cache.sqlite \
+ONE_SYSTEM_CACHE_EPOCH=deployment-v1 make serve
+```
+
+Use `make serve-hono` for Node. Parent directories created by the gateway are
+0700; preexisting parents must already be private. Database files and sidecars
+must be 0600. Keep both cache and recording stores out of version control.
+
+| Setting | Meaning |
+| --- | --- |
+| `ONE_SYSTEM_CACHE_MODE` | `off`, `readwrite`, or `replay`; defaults to `off` without storage, `readwrite` with storage |
+| `ONE_SYSTEM_CACHE_NAMESPACE` | Key partition, default `default` |
+| `ONE_SYSTEM_CACHE_EPOCH` | Required when enabled; change after model/adapter changes not represented in configuration |
+| `ONE_SYSTEM_CACHE_TTL` | Default `1h`; Go-duration syntax, minimum `1ms`, maximum `8760h`; hits do not extend expiry |
+| `ONE_SYSTEM_CACHE_MAX_BYTES` | Default `67108864`; positive stored-response-byte budget up to `1099511627776`, excluding SQLite/index/WAL overhead |
+
+Keys cover exact request bytes, namespace, deployment epoch and a revision of
+routing configuration, credentials, question assets and schema. Whitespace or
+key order changes miss safely. Authentication, request validation and hard
+capability checks run before lookup. Only validated successful decisions are
+stored. A hit skips both selector and leaf inference and reports zero **new**
+input/output tokens; it does not reproduce the original billed usage.
+
+`X-One-System-Cache: bypass` skips reads and writes; `replay` reads only and
+returns 404 `cache_miss` when no unexpired entry exists. Server replay mode
+rejects bypass. Enabled gateways return `X-One-System-Cache: hit`, `miss`,
+`bypass`, or `error` once a request reaches the cache. With caching off, this
+header is ignored and not returned: **a replay header alone cannot guarantee
+no inference on a host without caching.**
+
+Expired and oldest-written entries are evicted. Responses larger than the
+budget or the 8 MiB serialized replay limit are not stored; encoding can make a
+response larger than its upstream body. D1 also refuses entries above its
+2,000,000-byte row limit. Online cache failures fall through to ordinary inference; replay-only
+read failures return 503. Identical misses coalesce within one process/isolate,
+not across independent gateways. The cache is an optimization, not a history
+or accounting system: it stores hashed keys and replay responses, not inputs.
+
+## Optional request and response recording
+
+Recording is separately opt-in and works with or without caching. It preserves
+application exchanges for inspection and accounting instead of evicting them
+when cached decisions expire. Go and Node use a separate private SQLite file:
+
+```sh
+ONE_SYSTEM_LOG_PATH=.local/history/exchanges.sqlite make serve
+```
+
+`ONE_SYSTEM_LOG_MODE` accepts `off` or `record`: without storage it defaults to
+`off`; configuring storage enables `record` unless explicitly disabled.
+`record` without storage is invalid. Workers use `ONE_SYSTEM_LOG_BUCKET`, an R2
+binding, rather than a filesystem path. Cache and recording paths must identify
+different files, including their `-wal`, `-shm`, and `-journal` sidecars. For example,
+`cache.sqlite` and `cache.sqlite-journal` are not independent stores and are rejected
+before either is opened. Both features may be enabled together.
+
+**Recording stores sensitive bodies.** It records gateway requests and generated
+responses, including cache hits, bypasses, malformed requests and authentication
+rejections, plus each actual selector/backend request and response. Upstream
+error bodies are retained privately even though public errors stay sanitized.
+Original inference response bytes and token usage are never rewritten to replay
+usage. A cache hit appends its own gateway response record with the zero new usage
+actually returned; it does not create another backend exchange.
+Authorization, Cookie and other headers, URL queries and raw transport exception
+messages are not recorded. Secrets embedded by an application in bodies are
+not automatically redacted. Choose who may access the store accordingly.
+
+Each version-1 JSON record contains `id`, `request_id`, `exchange_id`, `kind`
+(`request` or `response`), `scope` (`gateway`, `selector`, or `backend`),
+`time` (Unix milliseconds), `method`, `path`, `body_base64` and `body_complete`.
+Response records add `status`, and `cache`/`error` when applicable. Correlate by
+request/exchange IDs, not timestamps or storage ordering. Body encoding preserves
+bytes, including numeric spellings and invalid UTF-8. SQLite appends records to
+`log_events`; R2 writes `logs/<request_id>/<id>.json`.
+
+Recording obeys the gateway's 8 MiB body safety ceiling and deadlines. An
+oversized, interrupted or unreadable body is explicitly marked
+`body_complete: false`; only its captured prefix can be retained. It never
+drains an unlimited stream to claim complete logging. Requests rejected by the
+host HTTP parser before reaching the gateway cannot be recorded. A response
+record describes what the gateway generated, not proof the client received it.
+
+Writes are awaited: the request is committed before that exchange is executed,
+and the response before it is returned. SQLite uses WAL and FULL synchronization.
+A recording failure returns 503 `logging_unavailable`; it must not silently
+continue inference or trigger selector fallback. Inference already performed
+cannot be rolled back when recording its response fails; there is no automatic
+retry. Crashes can leave a request without a response record, which represents
+an incomplete exchange rather than a fabricated successful one.
+
+There is no automatic recording expiry or size eviction. Provision capacity,
+backups and an explicit retention policy (including any R2 lifecycle rules).
+Deleting cached decisions never deletes history. The file-backed stores require
+0700 directories and 0600 files/sidecars; Node's SQLite operations are synchronous,
+so measure event-loop latency for large bodies or high concurrency. See
+[Worker bindings](hono.md#cloudflare-workers) for deployment configuration.

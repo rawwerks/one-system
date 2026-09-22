@@ -11,4 +11,14 @@
   // ONE_SYSTEM_WORKER_CONFIG build-time file path. No secrets are build inputs.
   // Routing questions are bundled; ONE_SYSTEM_QUESTIONS_JSON can supply a map
   // from question asset names to raw JSON strings at deployment time instead.
+  // Optional decision cache: add a d1_databases entry with binding
+  // ONE_SYSTEM_CACHE_DB, database_name, and database_id. Set the non-secret
+  // ONE_SYSTEM_CACHE_EPOCH explicitly; mode defaults readwrite when bound.
+  // ONE_SYSTEM_CACHE_MODE=off ignores a bound database. Namespace, TTL and
+  // MAX_BYTES use the same ONE_SYSTEM_CACHE_* variables as the Node host.
+  //
+  // Independent opt-in full-exchange recording: add an r2_buckets entry with
+  // binding ONE_SYSTEM_LOG_BUCKET and bucket_name. Recording defaults on when
+  // bound; ONE_SYSTEM_LOG_MODE=off disables it. Bodies may contain sensitive
+  // application data. The operator owns retention; no log objects are evicted.
 }

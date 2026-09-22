@@ -108,6 +108,14 @@
     {
       "id": "integration.evidence-gate",
       "guarantee": "Integration review uses explicit candidate evidence and versioned native questions through the official SDK. Inference-boundary or semantic violations reject; missing/ambiguous evidence holds. A positive review alone never admits a backend: named-model SDK/native-output probe evidence must match the candidate and target. Readiness applies only to the recorded endpoint/fixtures and does not attest weights, calibration, load behavior or production suitability. The gate never mutates the live registry."
+    },
+    {
+      "id": "cache.decision-ledger",
+      "guarantee": "Caching is optional and off without configured storage. Go and Node use interoperable private SQLite stores; Worker uses D1. Keys partition exact request bytes by namespace, epoch and configuration/schema/question/credential revision. Authenticate, validate and enforce hard capabilities before lookup. Cache only successful validated decisions. Hits invoke no upstream and report zero new token usage. Bypass neither reads nor writes; replay misses return 404 without inference. An absent cache ignores the extension header entirely. TTL and oldest-written size eviction bound response payload storage independently of recording. Online cache failures may infer; replay read failures return 503."
+    },
+    {
+      "id": "logging.exchange-history",
+      "guarantee": "Recording is separately opt-in and off without configured storage. Go/Node append versioned records in a private SQLite file; Workers await R2 object writes. Record distinct gateway requests and generated responses for every invocation, including cache hits, bypasses and rejections, plus actual selector/backend exchanges. Preserve captured bytes via base64 and original inference usage; never substitute cache replay usage for original upstream usage. Correlate request/response records and upstream calls using request_id and exchange_id. Exclude authentication/other headers and URL query/userinfo; application bodies remain explicitly sensitive. Capture within 8 MiB/deadline bounds, mark incomplete bodies honestly and do not record host-level parser rejections. Commit request before execution and response before return. A recording failure returns 503 logging_unavailable, without continuing inference or selector fallback; already executed inference is not retried or rolled back. Interrupted work may leave an unmatched request. Cache eviction must not delete logs; recording retention is operator-managed."
     }
   ]
 }

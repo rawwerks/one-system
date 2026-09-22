@@ -104,6 +104,8 @@ type config struct {
 	escalationConfidence float64
 	selection            *featureSelection
 	backends             map[string]backend
+	cache                cacheSettings
+	log                  logSettings
 }
 
 func envDefault(name, fallback string) string {
@@ -148,6 +150,15 @@ func loadConfig() (config, error) {
 	}
 	if !validKey(c.publicKey) {
 		return config{}, errors.New("ONE_SYSTEM_API_KEY must contain a nonempty bearer key without whitespace")
+	}
+	var err error
+	c.cache, err = loadCacheSettings()
+	if err != nil {
+		return config{}, err
+	}
+	c.log, err = loadLogSettings()
+	if err != nil {
+		return config{}, err
 	}
 	data, err := readConfigFile(envDefault("ONE_SYSTEM_CONFIG", "backends.json"))
 	if err != nil {
@@ -316,9 +327,9 @@ func run(logger *slog.Logger) error {
 	}
 	router, err := newRouter(c, logger)
 	if err != nil {
-		return errors.New("could not initialize official API schemas")
+		return errors.New("could not initialize router schemas or persistence")
 	}
-	defer router.client.CloseIdleConnections()
+	defer router.Close()
 	server := &http.Server{
 		Addr:              c.addr,
 		Handler:           router,

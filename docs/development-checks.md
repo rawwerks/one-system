@@ -22,6 +22,12 @@ make check-worker-local
 
 `make check-conformance` builds both servers, checks the prepared SDK environment, and drives their public HTTP endpoints against synthetic upstreams. It covers routing/disclosure, protocol fidelity, errors, credentials, bounds, disconnect cancellation, configuration, and the skill application through the official Python SDK. It does not call paid inference or load a private skill corpus.
 
+Persistence conformance also exercises Go/Node cache interoperability, restart,
+separate logging without caching, exact gateway/selector/backend bodies, rejected
+requests, explicit-off behavior and storage failures that must prevent inference
+or selector fallback. `make check-hono` runs the native cache/logging boundary
+tests; `make check-worker-local` exercises D1/R2 using actual local workerd.
+
 `make check` alone skips dual-runtime conformance unless its runtime environment variables are supplied. Hono build includes type checking. `check-worker` bundles and performs a Wrangler deployment dry run; it does not deploy or prove production Worker behavior. Dependency installation can require internet access even though the tests use local synthetic services.
 
 The conformance runner verifies that Hono is running under real Node 24. `make check-conformance NODE=/path/to/node` selects that binary explicitly; direct Go test runs can set `ONE_SYSTEM_NODE_BINARY`. Bun is used as a package/script runner, not as a replacement for the Node server runtime.

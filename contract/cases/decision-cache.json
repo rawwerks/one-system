@@ -1,0 +1,59 @@
+{
+  "invariants": ["cache.decision-ledger"],
+  "environment": {
+    "ONE_SYSTEM_CACHE_EPOCH": "conformance-epoch-v1",
+    "ONE_SYSTEM_CACHE_NAMESPACE": "conformance",
+    "ONE_SYSTEM_CACHE_TTL": "1h",
+    "ONE_SYSTEM_CACHE_MAX_BYTES": "1048576"
+  },
+  "request": "{\"model\":\"routing-demo\",\"state\":{\"canary\":\"PRIVATE_STATE_CANARY\",\"revision\":9007199254740992},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is this synthetic?\"}}}",
+  "leaf_response": "{\"model\":\"resolved-leaf\",\"answers\":{\"q\":{\"type\":\"noul\",\"noul\":0.9}},\"usage\":{\"input_tokens\":11,\"output_tokens\":3}}",
+  "replayed_response": "{\"model\":\"resolved-leaf\",\"answers\":{\"q\":{\"type\":\"noul\",\"noul\":0.9}},\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}",
+  "distinct_requests": [
+    {
+      "name": "inserted-whitespace",
+      "request": "{\"model\":\"routing-demo\", \"state\":{\"canary\":\"PRIVATE_STATE_CANARY\",\"revision\":9007199254740992},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is this synthetic?\"}}}"
+    },
+    {
+      "name": "reordered-keys",
+      "request": "{\"state\":{\"canary\":\"PRIVATE_STATE_CANARY\",\"revision\":9007199254740992},\"model\":\"routing-demo\",\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is this synthetic?\"}}}"
+    },
+    {
+      "name": "adjacent-large-integer",
+      "request": "{\"model\":\"routing-demo\",\"state\":{\"canary\":\"PRIVATE_STATE_CANARY\",\"revision\":9007199254740993},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is this synthetic?\"}}}"
+    },
+    {
+      "name": "same-value-other-lexeme",
+      "request": "{\"model\":\"routing-demo\",\"state\":{\"canary\":\"PRIVATE_STATE_CANARY\",\"revision\":9007199254740992.0},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is this synthetic?\"}}}"
+    },
+    {
+      "name": "changed-instructions",
+      "request": "{\"model\":\"routing-demo\",\"state\":{\"canary\":\"PRIVATE_STATE_CANARY\",\"revision\":9007199254740992},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is this synthetic data?\"}}}"
+    }
+  ],
+  "invalid_modes": [
+    {"name": "unknown-mode", "values": ["unknown-mode"]},
+    {"name": "wrong-case", "values": ["Replay"]},
+    {"name": "comma-joined", "values": ["replay, bypass"]},
+    {"name": "duplicate-distinct", "values": ["replay", "bypass"]},
+    {"name": "duplicate-identical", "values": ["bypass", "bypass"]}
+  ],
+  "ignored_modes": [[], [""], ["replay"], ["bypass"], ["unknown-mode"], ["replay", "bypass"]],
+  "rejected_settings": [
+    {"name": "missing-epoch", "environment": {"ONE_SYSTEM_CACHE_EPOCH": ""}},
+    {"name": "blank-epoch", "environment": {"ONE_SYSTEM_CACHE_EPOCH": "   "}},
+    {"name": "blank-namespace", "environment": {"ONE_SYSTEM_CACHE_NAMESPACE": " "}},
+    {"name": "unknown-mode", "environment": {"ONE_SYSTEM_CACHE_MODE": "write"}},
+    {"name": "ttl-below-minimum", "environment": {"ONE_SYSTEM_CACHE_TTL": "999us"}},
+    {"name": "ttl-above-maximum", "environment": {"ONE_SYSTEM_CACHE_TTL": "8761h"}},
+    {"name": "ttl-not-a-duration", "environment": {"ONE_SYSTEM_CACHE_TTL": "1 hour"}},
+    {"name": "ttl-scientific-notation", "environment": {"ONE_SYSTEM_CACHE_TTL": "1e3ms"}},
+    {"name": "max-bytes-zero", "environment": {"ONE_SYSTEM_CACHE_MAX_BYTES": "0"}},
+    {"name": "max-bytes-above-maximum", "environment": {"ONE_SYSTEM_CACHE_MAX_BYTES": "1099511627777"}},
+    {"name": "max-bytes-not-an-integer", "environment": {"ONE_SYSTEM_CACHE_MAX_BYTES": "64MiB"}},
+    {"name": "mode-without-storage", "environment": {"ONE_SYSTEM_CACHE_PATH": "", "ONE_SYSTEM_CACHE_MODE": "readwrite"}},
+    {"name": "memory-database", "environment": {"ONE_SYSTEM_CACHE_PATH": ":memory:"}},
+    {"name": "uri-database", "environment": {"ONE_SYSTEM_CACHE_PATH": "file:decisions.sqlite?mode=memory"}}
+  ],
+  "changed_limit": {"max_characters": 4096}
+}

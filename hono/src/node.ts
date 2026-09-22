@@ -1,9 +1,14 @@
 import { createServer } from 'node:http';
 import { open } from 'node:fs/promises';
 import { getRequestListener } from '@hono/node-server';
-import { createGateway } from './app.js';
+import { createDecisionCache, createGateway } from './app.js';
 import { CONFIG_LIMIT, loadConfig } from './config.js';
 import { APIError, errorResponse } from './transport.js';
+import { loadCacheSettings } from './cache.js';
+import { NodeDecisionStore } from './cache-store-node.js';
+import { ExchangeLogger, loadLogSettings } from './logging.js';
+import { NodeLogStore } from './log-store-node.js';
+import { assertSeparateSQLitePaths } from './sqlite-files.js';
 
 async function readConfigFile(path: string): Promise<string> {
   const file = await open(path, 'r');
@@ -26,12 +31,32 @@ async function main(): Promise<void> {
     secret: name => process.env[name],
     questions: readConfigFile,
   });
-  const app = createGateway(config);
   const address = process.env.ONE_SYSTEM_ADDR || '127.0.0.1:8090';
   const match = /^(?:\[([^\]]+)\]|([^:]*)):([0-9]+)$/.exec(address);
   if (!match || Number(match[3]) > 65535) throw new Error('Invalid ONE_SYSTEM_ADDR');
   const host = match[1] ?? match[2] ?? '';
   const port = Number(match[3]);
+  const cacheSettings = loadCacheSettings({
+    value: name => process.env[name], storageConfigured: !!process.env.ONE_SYSTEM_CACHE_PATH,
+  });
+  const logSettings = loadLogSettings({
+    value: name => process.env[name], storageConfigured: !!process.env.ONE_SYSTEM_LOG_PATH,
+  });
+  if (cacheSettings.mode !== 'off' && logSettings.mode !== 'off') assertSeparateSQLitePaths(cacheSettings.path, logSettings.path);
+  const logStore = logSettings.mode === 'record' ? await NodeLogStore.open(logSettings.path) : undefined;
+  let cacheStore: NodeDecisionStore | undefined;
+  try {
+    if (cacheSettings.mode !== 'off') cacheStore = await NodeDecisionStore.open(cacheSettings.path, cacheSettings.maxBytes);
+  } catch (failure) {
+    await logStore?.close();
+    throw failure;
+  }
+  const cache = cacheStore && createDecisionCache(config, cacheSettings, cacheStore);
+  const logger = logStore && new ExchangeLogger(logStore);
+  const app = createGateway(config, { ...(cache && { cache }), ...(logger && { logger }) });
+  const closeStores = async () => {
+    try { await cacheStore?.close(); } finally { await logStore?.close(); }
+  };
   // The adapter propagates outgoing disconnects into Request.signal. Native
   // globals keep the app.fetch surface identical to the Worker implementation.
   const listener = getRequestListener(request => app.fetch(request), {
@@ -46,13 +71,19 @@ async function main(): Promise<void> {
     keepAliveTimeout: 60_000,
   }, listener);
   server.setTimeout(310_000, socket => socket.destroy());
-  await new Promise<void>((accept, reject) => {
-    server.once('error', reject);
-    server.listen(port, host || undefined, () => {
-      server.removeListener('error', reject);
-      accept();
+  try {
+    await cache?.revision;
+    await new Promise<void>((accept, reject) => {
+      server.once('error', reject);
+      server.listen(port, host || undefined, () => {
+        server.removeListener('error', reject);
+        accept();
+      });
     });
-  });
+  } catch (failure) {
+    await closeStores();
+    throw failure;
+  }
   process.stderr.write('one-system listening\n');
   let stopping = false;
   const stop = () => {
@@ -64,6 +95,10 @@ async function main(): Promise<void> {
       clearTimeout(timeout);
       process.removeListener('SIGINT', stop);
       process.removeListener('SIGTERM', stop);
+      void closeStores().catch(() => {
+        process.stderr.write('one-system could not close persistence storage\n');
+        process.exitCode = 1;
+      });
     });
   };
   process.on('SIGINT', stop);

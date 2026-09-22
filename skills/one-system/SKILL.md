@@ -127,6 +127,23 @@ configuration. Apply the TypeSafe skill when designing judgments. Verify the
 resulting route with representative examples rather than treating model confidence
 as proof that a destination is appropriate.
 
+## Optional caching and recording
+
+Neither feature is required for a deployment. Enable the decision cache only
+when wanted: `ONE_SYSTEM_CACHE_PATH` plus `ONE_SYSTEM_CACHE_EPOCH` on Go/Node,
+or `ONE_SYSTEM_CACHE_DB` plus the epoch on Workers. A replay hit skips inference
+and reports zero new tokens; it is not an accounting record.
+
+For full application exchange history, separately configure `ONE_SYSTEM_LOG_PATH`
+on Go/Node or `ONE_SYSTEM_LOG_BUCKET` on Workers. Recording includes sensitive
+request/response bodies, upstream errors and distinct cache hits. It excludes
+transport headers and query strings, not secrets embedded in application bodies.
+Both features default off without storage; explicit `*_MODE=off` overrides storage.
+Logs are not evicted with cached decisions. Explain storage/retention and the
+fail-closed `logging_unavailable` behavior before enabling recording. Use
+[the configuration contract](../../docs/configuration.md#optional-request-and-response-recording)
+for body limits and completeness semantics.
+
 ## Verify the user's path
 
 Check authenticated discovery first, then send a small synthetic native request.

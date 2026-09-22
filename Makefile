@@ -73,6 +73,9 @@ help:
 	  'Agent review: examples/agent-review.questions.json supplies native questions; send named source files in state.sources.' \
 	  'Public-release review: examples/public_release_review.py --dry-run plans; --confirm-send sends every non-ignored file; --history adds all refs.' \
 	  'Selector disclosure follows the configured mode; instructions and criteria may contain private data.' \
+	  'Optional cache: ONE_SYSTEM_CACHE_PATH plus ONE_SYSTEM_CACHE_EPOCH; off without storage.' \
+	  'Optional sensitive exchange history: ONE_SYSTEM_LOG_PATH (separate SQLite file); off without storage.' \
+	  'Workers use optional ONE_SYSTEM_CACHE_DB (D1) and ONE_SYSTEM_LOG_BUCKET (R2) bindings. See docs/configuration.md.' \
 	  'GET requests and POST requests require a Bearer key; listen addresses default to loopback.'
 
 setup:
@@ -169,6 +172,7 @@ check-go-static:
 	$(GO) vet ./...
 
 check-hono: build-hono
+	$(NODE) --test hono/dist/cache.test.js hono/dist/logging.test.js
 
 check-worker:
 	PATH="$(dir $(NODE)):$$PATH" $(JS_RUN) check-worker

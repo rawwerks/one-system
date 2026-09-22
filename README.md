@@ -182,6 +182,14 @@ model and context limits. See [configuration](docs/configuration.md#adding-a-bac
 for the JSON format.
 <!-- true-up:end id=capability-constraints -->
 
+Decision caching and full request/response recording are optional and off until
+configured. Cache identical requests to avoid repeated inference; enable recording
+to retain gateway and upstream exchanges, including cache hits and failures.
+They can be used separately or together. Recording contains sensitive bodies and
+has its own retention policy, independent of cache eviction. See
+[cache configuration](docs/configuration.md#optional-decision-cache) and
+[recording configuration](docs/configuration.md#optional-request-and-response-recording).
+
 ## Build from source or use another runtime
 
 With Go 1.23 or newer, Git, and Make installed (repository access is currently

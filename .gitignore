@@ -18,6 +18,14 @@
 *.local.json
 *.local.backends.json
 
+# Optional decision caches and sensitive exchange history, including sidecars.
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
 # Optional Laya checkpoint weights and model caches are supplied separately.
 /models/
 /checkpoints/

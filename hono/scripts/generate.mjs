@@ -1,12 +1,14 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import Ajv2020 from 'ajv/dist/2020.js';
 import standaloneCode from 'ajv/dist/standalone/index.js';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const generated = resolve(root, 'hono/src/generated');
-const document = JSON.parse(await readFile(resolve(root, 'schema/typesafe.openapi.json'), 'utf8'));
+const openAPI = await readFile(resolve(root, 'schema/typesafe.openapi.json'));
+const document = JSON.parse(openAPI.toString('utf8'));
 const annotations = new Set(['title', 'description', 'examples', 'default', 'deprecated', 'readOnly', 'writeOnly', '$comment', 'discriminator']);
 const scalarKeywords = new Set(['type', 'required', 'minItems', 'maxItems', 'minProperties', 'maxProperties', 'minLength', 'maxLength', 'pattern']);
 const schemas = new Set(['additionalProperties', 'unevaluatedProperties', 'items', 'unevaluatedItems', 'propertyNames', 'not', 'if', 'then', 'else']);
@@ -83,5 +85,7 @@ if (process.env.ONE_SYSTEM_WORKER_CONFIG) {
 await writeFile(resolve(generated, 'assets.ts'),
   `// Generated public/configuration assets; secrets belong in runtime bindings.\n` +
   `export const backendSelectionQuestion = ${JSON.stringify(template)};\n` +
+  `export const openAPIDigest = ${JSON.stringify(createHash('sha256').update(openAPI).digest('hex'))};\n` +
+  `export const backendSelectionQuestionDigest = ${JSON.stringify(createHash('sha256').update(template).digest('hex'))};\n` +
   `export const bundledRegistry: string | null = ${JSON.stringify(registry)};\n` +
   `export const bundledQuestions: ReadonlyMap<string, string> = new Map(${JSON.stringify([...assets])});\n`);

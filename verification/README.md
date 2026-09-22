@@ -87,6 +87,12 @@ The semantic scope is explicitly declared:
   cross-language scenarios described in [SCENARIOS.md](SCENARIOS.md), then compare
   each actual outcome with its contract in an isolated state. At most eight
   evaluation requests run concurrently; questions about the same case share state.
+  Worker observations also cover opt-in D1 cache and R2 exchange history:
+  exact replay, distinct recorded hits, error bodies, fail-closed writes,
+  large-body capture, restart and retention independent of cache eviction.
+  The existing per-scenario semantic question applies unchanged to these new
+  observations; native Go/Hono conformance additionally exercises file-backed
+  recording and cross-runtime cache replay.
 - `system.laya`: optional real adapter verification with `--include-laya`; missing
   runtime or checkpoint leaves that profile incomplete.
 

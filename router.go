@@ -43,6 +43,8 @@ type router struct {
 	capabilitiesJSON []byte
 	keyHash          [32]byte
 	selectorTemplate map[string]json.RawMessage
+	cache            *decisionCache
+	logs             *exchangeLog
 }
 
 type tokenUsage struct {
@@ -130,6 +132,22 @@ func newRouter(c config, logger *slog.Logger) (*router, error) {
 	if err := decodeJSON(backendSelectionQuestion, &selectorTemplate); err != nil {
 		return nil, err
 	}
+	if (c.cache.Mode == "readwrite" || c.cache.Mode == "replay") && c.log.Mode == "record" {
+		if err := separateStoragePaths(c.cache.Path, c.log.Path); err != nil {
+			return nil, err
+		}
+	}
+	cache, err := newDecisionCache(c)
+	if err != nil {
+		return nil, err
+	}
+	logs, err := newExchangeLog(c.log)
+	if err != nil {
+		if cache != nil {
+			_ = cache.store.Close()
+		}
+		return nil, err
+	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -144,6 +162,7 @@ func newRouter(c config, logger *slog.Logger) (*router, error) {
 		config: c, logger: logger, requestSchema: request, responseSchema: response,
 		modelsJSON: catalogue, capabilitiesJSON: capabilitiesJSON, keyHash: sha256.Sum256([]byte("Bearer " + c.publicKey)),
 		selectorTemplate: selectorTemplate,
+		cache:            cache, logs: logs,
 		client: &http.Client{
 			Transport: transport, Timeout: 180 * time.Second,
 			// Never forward any bearer key to an upstream redirect destination.
@@ -174,6 +193,14 @@ func validateJSON(schema *jsonschema.Schema, data []byte) error {
 }
 
 func (r *router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if r.logs != nil {
+		r.serveLoggedHTTP(w, req)
+		return
+	}
+	r.serveHTTP(w, req)
+}
+
+func (r *router) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	var method string
@@ -209,7 +236,7 @@ func (r *router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *router) systemOne(w http.ResponseWriter, req *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, maxBodyBytes))
+	body, err := gatewayRequestBody(w, req)
 	if err != nil {
 		writeAPIError(w, apiError{422, "invalid_body", "Request body is unreadable or exceeds 8 MiB"})
 		return
@@ -250,14 +277,9 @@ func (r *router) systemOne(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, apiError{422, "unsupported_capability", "No requested backend supports these inputs"})
 		return
 	}
-	if len(eligible) == 1 {
-		// One representable destination: selection cannot change the outcome.
-		decision.Choice = eligible[0]
-		decision.Confidence = nil
-	}
+	var selector map[string]any
+	var selectorQuestions map[string]json.RawMessage
 	if len(eligible) > 1 {
-		var selector map[string]any
-		var selectorQuestions map[string]json.RawMessage
 		if r.config.selection != nil {
 			selector, selectorQuestions = r.featureRequest(questions)
 		} else {
@@ -269,17 +291,31 @@ func (r *router) systemOne(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
-		selectorBackend := r.config.backends[r.config.selector]
-		if !selectorBackend.supports(selector["state"], questionShapes(selectorQuestions)) {
+		if !r.config.backends[r.config.selector].supports(selector["state"], questionShapes(selectorQuestions)) {
 			writeAPIError(w, apiError{422, "unsupported_capability", "Selector does not support the routing request"})
 			return
 		}
-		selected, failure := r.call(ctx, selectorBackend.BaseURL, selectorBackend.key, selector, selectorQuestions)
+	}
+	// Reject unsupported requests before consulting stored decisions.
+	req = req.WithContext(ctx)
+	cacheKey, release, complete := r.beginDecision(w, req, body, questions)
+	defer release()
+	if complete {
+		return
+	}
+	if len(eligible) == 1 {
+		// One representable destination: selection cannot change the outcome.
+		decision.Choice = eligible[0]
+		decision.Confidence = nil
+	}
+	if len(eligible) > 1 {
+		selectorBackend := r.config.backends[r.config.selector]
+		selected, failure := r.call(ctx, "selector", selectorBackend.BaseURL, selectorBackend.key, selector, selectorQuestions)
 		if failure != nil {
 			// A privacy router must not disclose the state because routing broke.
 			// Failing closed onto the fallback keeps the request on the private
 			// backend; without one there is no safe default, so surface the error.
-			if r.config.fallback == "" {
+			if failure.code == "logging_unavailable" || r.config.fallback == "" {
 				r.logger.Warn("selector_failed", "status", failure.status, "latency_ms", time.Since(started).Milliseconds())
 				writeAPIError(w, *failure)
 				return
@@ -323,7 +359,7 @@ func (r *router) systemOne(w http.ResponseWriter, req *http.Request) {
 	}
 	// Only model changes; opaque IDs, structured criteria, and number lexemes survive.
 	original["model"], _ = json.Marshal(destination.Model)
-	leaf, failure := r.call(ctx, destination.BaseURL, destination.key, original, questions)
+	leaf, failure := r.call(ctx, "backend", destination.BaseURL, destination.key, original, questions)
 	status := http.StatusOK
 	if failure != nil {
 		status = failure.status
@@ -350,6 +386,7 @@ func (r *router) systemOne(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, apiError{502, "invalid_response", "Upstream response cannot be returned as SystemOneResponse"})
 		return
 	}
+	r.rememberDecision(ctx, cacheKey, leaf.raw)
 	_, _ = w.Write(response)
 }
 
@@ -621,7 +658,7 @@ func summarizeState(state json.RawMessage) stateSummary {
 	return stateSummary{Characters: len(runes), NonASCIILetterFraction: fraction}
 }
 
-func (r *router) call(ctx context.Context, base, key string, payload any, questions map[string]json.RawMessage) (*upstreamResponse, *apiError) {
+func (r *router) call(ctx context.Context, scope, base, key string, payload any, questions map[string]json.RawMessage) (result *upstreamResponse, failure *apiError) {
 	body, err := json.Marshal(payload)
 	if err != nil || validateJSON(r.requestSchema, body) != nil {
 		return nil, &apiError{500, "invalid_internal_request", "Could not construct a valid upstream request"}
@@ -633,11 +670,36 @@ func (r *router) call(ctx context.Context, base, key string, payload any, questi
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	var data []byte
+	var readErr error
+	loggedStatus, complete := 0, false
+	if r.logs != nil {
+		exchange, err := r.logs.begin(ctx, scope, req.Method, req.URL.EscapedPath(), body, true, "")
+		if err != nil {
+			return nil, loggingUnavailable()
+		}
+		defer func() {
+			code := ""
+			if failure != nil {
+				code = failure.code
+			}
+			if err := r.logs.finish(ctx, exchange, loggedStatus, data, complete, "", code); err != nil {
+				result, failure = nil, loggingUnavailable()
+			}
+		}()
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, &apiError{502, "upstream_unavailable", "Upstream request failed"}
 	}
 	defer resp.Body.Close()
+	loggedStatus = resp.StatusCode
+	// Non-success bodies also belong in the audit log. When recording is off,
+	// retain the original behavior of closing rejected responses without reading.
+	if r.logs != nil || resp.StatusCode == http.StatusOK {
+		data, readErr = io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
+		complete = readErr == nil && len(data) <= maxBodyBytes
+	}
 	if resp.StatusCode != http.StatusOK {
 		status := resp.StatusCode
 		// Fetch turns proxy-authentication responses into network failures.
@@ -655,11 +717,10 @@ func (r *router) call(ctx context.Context, base, key string, payload any, questi
 		}
 		return nil, &apiError{status, "upstream_rejected", "Upstream could not complete the request"}
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
-	if err != nil || len(data) > maxBodyBytes || validateJSON(r.responseSchema, data) != nil {
+	if readErr != nil || len(data) > maxBodyBytes || validateJSON(r.responseSchema, data) != nil {
 		return nil, &apiError{502, "invalid_upstream_response", "Upstream returned an invalid SystemOneResponse"}
 	}
-	result := &upstreamResponse{}
+	result = &upstreamResponse{}
 	if json.Unmarshal(data, &result.raw) != nil || json.Unmarshal(result.raw["answers"], &result.answers) != nil || json.Unmarshal(result.raw["usage"], &result.usage) != nil || result.usage.Input < 0 || result.usage.Output < 0 {
 		return nil, &apiError{502, "invalid_upstream_response", "Upstream returned invalid answers or token usage"}
 	}
@@ -703,6 +764,9 @@ func answersMatch(questions, answers map[string]json.RawMessage) bool {
 }
 
 func writeAPIError(w http.ResponseWriter, failure apiError) {
+	if recorded, ok := w.(*loggedResponseWriter); ok {
+		recorded.errorCode = failure.code
+	}
 	w.WriteHeader(failure.status)
 	// Never serialize schema diagnostics or raw upstream errors: they contain inputs.
 	_ = json.NewEncoder(w).Encode(map[string]any{"detail": []any{map[string]any{

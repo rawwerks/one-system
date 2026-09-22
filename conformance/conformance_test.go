@@ -83,7 +83,8 @@ func TestConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, runtime := range []runtimeSpec{{"go", goBinary, nil}, {"hono", node, []string{honoEntry}}} {
+	runtimes := []runtimeSpec{{"go", goBinary, nil}, {"hono", node, []string{honoEntry}}}
+	for _, runtime := range runtimes {
 		t.Run(runtime.name, func(t *testing.T) {
 			t.Run("native-lossless", func(t *testing.T) { testNativeLossless(t, runtime) })
 			t.Run("selector-disclosure", func(t *testing.T) { testSelectorDisclosure(t, runtime) })
@@ -100,8 +101,11 @@ func TestConformance(t *testing.T) {
 			t.Run("disconnect", func(t *testing.T) { testDisconnect(t, runtime) })
 			t.Run("strict-config", func(t *testing.T) { testStrictConfig(t, runtime) })
 			t.Run("canonical-skill-sdk", func(t *testing.T) { testCanonicalSkillSDK(t, runtime, skillPython) })
+			t.Run("decision-cache", func(t *testing.T) { testDecisionCache(t, runtime) })
+			t.Run("exchange-logging", func(t *testing.T) { testExchangeLogging(t, runtime) })
 		})
 	}
+	t.Run("decision-cache-interop", func(t *testing.T) { testDecisionCacheInterop(t, runtimes) })
 }
 
 type observedCall struct {
@@ -245,15 +249,18 @@ func (log *limitedLog) String() string {
 }
 
 type gateway struct {
-	url     string
-	client  *http.Client
-	command *exec.Cmd
-	done    chan struct{}
-	err     error // written before done is closed
-	log     limitedLog
+	url       string
+	client    *http.Client
+	transport *http.Transport
+	command   *exec.Cmd
+	done      chan struct{}
+	err       error // written before done is closed
+	log       limitedLog
 }
 
-func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMessage) *gateway {
+type header struct{ name, value string }
+
+func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMessage, environment ...string) *gateway {
 	t.Helper()
 	dir := t.TempDir()
 	if len(questions) != 0 {
@@ -277,9 +284,10 @@ func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMes
 	}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	g := &gateway{
-		url:     "http://" + addr,
-		client:  &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		command: exec.Command(runtime.command, runtime.args...), done: make(chan struct{}),
+		url:       "http://" + addr,
+		client:    &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		transport: transport,
+		command:   exec.Command(runtime.command, runtime.args...), done: make(chan struct{}),
 	}
 	g.command.Dir = dir
 	// Do not inherit developer credentials, proxy settings, Node hooks, or private roots.
@@ -291,6 +299,7 @@ func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMes
 	for _, id := range []string{"local", "remote", "selector"} {
 		g.command.Env = append(g.command.Env, "CONFORMANCE_"+strings.ToUpper(id)+"_KEY="+backendKey(id))
 	}
+	g.command.Env = append(g.command.Env, environment...)
 	g.command.Stdout, g.command.Stderr = &g.log, &g.log
 	if err := g.command.Start(); err != nil {
 		t.Fatalf("starting %s: %v", runtime.name, err)
@@ -321,9 +330,9 @@ func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMes
 	return g
 }
 
-func start(t *testing.T, runtime runtimeSpec, config any, questions json.RawMessage) *gateway {
+func start(t *testing.T, runtime runtimeSpec, config any, questions json.RawMessage, environment ...string) *gateway {
 	t.Helper()
-	g := launch(t, runtime, config, questions)
+	g := launch(t, runtime, config, questions, environment...)
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
@@ -347,7 +356,27 @@ func start(t *testing.T, runtime runtimeSpec, config any, questions json.RawMess
 	return nil
 }
 
-func (g *gateway) request(t *testing.T, method, path, auth string, body []byte) (int, http.Header, []byte) {
+// stop waits for an ordinary shutdown so subsequent launches test persistence.
+func (g *gateway) stop(t *testing.T) {
+	t.Helper()
+	select {
+	case <-g.done:
+		return
+	default:
+	}
+	if err := g.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-g.done:
+	case <-time.After(10 * time.Second):
+		_ = g.command.Process.Kill()
+		t.Fatal("gateway did not stop")
+	}
+	g.transport.CloseIdleConnections()
+}
+
+func (g *gateway) request(t *testing.T, method, path, auth string, body []byte, extra ...header) (int, http.Header, []byte) {
 	t.Helper()
 	req, err := http.NewRequest(method, g.url+path, bytes.NewReader(body))
 	if err != nil {
@@ -356,6 +385,9 @@ func (g *gateway) request(t *testing.T, method, path, auth string, body []byte) 
 	req.Header.Set("Content-Type", "application/json")
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
+	}
+	for _, item := range extra {
+		req.Header.Add(item.name, item.value)
 	}
 	response, err := g.client.Do(req)
 	if err != nil {
@@ -369,9 +401,9 @@ func (g *gateway) request(t *testing.T, method, path, auth string, body []byte) 
 	return response.StatusCode, response.Header, raw
 }
 
-func (g *gateway) post(t *testing.T, body []byte) (int, http.Header, []byte) {
+func (g *gateway) post(t *testing.T, body []byte, extra ...header) (int, http.Header, []byte) {
 	t.Helper()
-	return g.request(t, http.MethodPost, "/v1/systemone", "Bearer "+publicKey, body)
+	return g.request(t, http.MethodPost, "/v1/systemone", "Bearer "+publicKey, body, extra...)
 }
 
 func fixture(t *testing.T, name string, value any) {

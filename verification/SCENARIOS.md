@@ -115,6 +115,21 @@ There is no implicit automatic alias. It must reject invalid routes and unsuppor
 before invoking a backend. Forwarded native JSON must preserve precision and
 special object keys. Successful response bytes remain unchanged, and upstream
 proxy errors become sanitized gateway errors without forwarding private causes.
+Optional persistence is exercised separately with real local D1 and R2 bindings.
+With no bindings both features are off. With bindings, exact-repeat decisions
+are replayed without inference and with zero new usage, while logging appends
+distinct gateway exchanges for misses, hits, bypasses and errors, plus actual
+upstream exchanges. Original inference records preserve the received bytes and
+usage; a later hit appends a gateway response record with the zero new usage it
+actually returned, without rewriting those original records. Authentication
+headers and query strings are excluded. Recording includes bounded
+upstream error bodies even though client errors stay sanitized. Accepted bodies
+larger than D1's row limit are recorded in R2. Storage write failure must return
+503 logging_unavailable without starting inference. Restart preserves both stores;
+cache eviction never deletes recording history. A large insertion into a D1 cache
+filled with small entries must enforce the byte budget and oldest-write eviction
+within that write. These scenarios use synthetic bodies and a local-only wrapper
+to inspect storage; no inspection endpoint is shipped.
 <!-- true-up:end id=worker -->
 
 ## Optional local inference

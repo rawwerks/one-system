@@ -2,13 +2,30 @@ import { Hono } from 'hono';
 import { INT64_MAX, compact, compareIDs, encodeObject, finiteFloat, object, parseJSON, quote, raw, replaceFields, text, validationView } from './codec.js';
 import type { JsonNode, JsonObject } from './codec.js';
 import type { Backend, FeatureSelection, GatewayConfig } from './config.js';
-import { APIError, BODY_LIMIT, callBackend, deadline, errorResponse, readBounded } from './transport.js';
+import { APIError, BODY_LIMIT, callBackend, captureBounded, deadline, errorResponse, readBoundedBytes } from './transport.js';
 import type { GatewayDependencies, Usage } from './transport.js';
+import { DecisionCache, configurationRevision } from './cache.js';
+import type { CacheSettings, DecisionStore } from './cache.js';
+import { LoggingUnavailable } from './logging.js';
+import type { CapturedBody, ExchangeLogger, LogExchange } from './logging.js';
 import { validateModels, validateRequest, validateResponse } from './generated/validators.js';
-import { backendSelectionQuestion } from './generated/assets.js';
+import { backendSelectionQuestion, backendSelectionQuestionDigest, openAPIDigest } from './generated/assets.js';
 export { loadConfig } from './config.js';
 export type { GatewayConfig, ConfigDependencies } from './config.js';
 export type { GatewayDependencies } from './transport.js';
+export { DecisionCache, loadCacheSettings } from './cache.js';
+export type { CacheSettings, CacheSettingsSource, DecisionStore } from './cache.js';
+export { ExchangeLogger, loadLogSettings } from './logging.js';
+export type { LogRecord, LogStore } from './logging.js';
+
+/** All hosts partition decisions using the same pinned public contract bytes. */
+export function createDecisionCache(
+  config: GatewayConfig, settings: CacheSettings, store: DecisionStore, now?: () => number,
+): DecisionCache {
+  return new DecisionCache(settings, store, configurationRevision(config, settings.epoch, {
+    openAPI: openAPIDigest, selectorQuestion: backendSelectionQuestionDigest,
+  }), now);
+}
 
 const selectorID = 'backend';
 const encoder = new TextEncoder();
@@ -118,12 +135,23 @@ function escalates(selection: FeatureSelection, answers: JsonObject): boolean {
   return false;
 }
 
-async function systemOne(request: Request, config: GatewayConfig, fetcher: typeof fetch, template: JsonObject): Promise<Response> {
-  let source: string;
-  const bodyRead = deadline(request.signal, 30_000);
-  try { source = await readBounded(request.body, BODY_LIMIT, bodyRead.signal); } catch {
-    throw new APIError(422, 'invalid_body', 'Request body is unreadable or exceeds 8 MiB');
-  } finally { bodyRead.close(); }
+async function systemOne(
+  request: Request, config: GatewayConfig, fetcher: typeof fetch, template: JsonObject,
+  cache: DecisionCache | undefined, responseHeaders: Record<string, string>,
+  logging?: { logger: ExchangeLogger; requestID: string }, captured?: CapturedBody,
+): Promise<Response> {
+  let received: Uint8Array;
+  if (captured) {
+    if (!captured.complete) throw new APIError(422, 'invalid_body', 'Request body is unreadable or exceeds 8 MiB');
+    received = captured.bytes;
+  } else {
+    const bodyRead = deadline(request.signal, 30_000);
+    try { received = await readBoundedBytes(request.body, BODY_LIMIT, bodyRead.signal); } catch {
+      throw new APIError(422, 'invalid_body', 'Request body is unreadable or exceeds 8 MiB');
+    } finally { bodyRead.close(); }
+  }
+  // Cache identity uses received bytes, never a lossy UTF-8 round trip.
+  const source = new TextDecoder('utf-8', { ignoreBOM: true }).decode(received);
   let original: JsonObject;
   try {
     original = object(parseJSON(source));
@@ -146,8 +174,7 @@ async function systemOne(request: Request, config: GatewayConfig, fetcher: typeo
     const shapes = questionShapes(questions);
     const eligible = model === config.name ? eligibleBackends(config, state, shapes) : supports(config.backends.get(model)!, state.kind === 'string', shapes) ? [model] : [];
     if (eligible.length === 0) throw new APIError(422, 'unsupported_capability', 'No requested backend supports these inputs');
-    let choice = eligible.length === 1 ? eligible[0]! : config.selector;
-    let selectionUsage: Usage = { input: 0n, output: 0n };
+    let selectorRequest: { backend: Backend; payload: string; questions: JsonObject } | undefined;
     if (eligible.length > 1) {
       let selectorState: string;
       let selectorQuestions: JsonObject;
@@ -163,14 +190,33 @@ async function systemOne(request: Request, config: GatewayConfig, fetcher: typeo
           ['input_summary', JSON.stringify(summarize(state))],
         ]);
       }
-      const selectorBackend = config.backends.get(config.selector)!;
-      if (!supports(selectorBackend, selectorState.trimStart().startsWith('"'), questionShapes(selectorQuestions))) throw new APIError(422, 'unsupported_capability', 'Selector does not support the routing request');
+      const backend = config.backends.get(config.selector)!;
+      if (!supports(backend, selectorState.trimStart().startsWith('"'), questionShapes(selectorQuestions))) throw new APIError(422, 'unsupported_capability', 'Selector does not support the routing request');
       const payload = encodeObject([
-        ['model', quote(selectorBackend.model)], ['state', selectorState], ['questions', raw(selectorQuestions)],
+        ['model', quote(backend.model)], ['state', selectorState], ['questions', raw(selectorQuestions)],
       ]);
+      selectorRequest = { backend, payload, questions: selectorQuestions };
+    }
+    // Reject inference-free failures before looking up a decision.
+    let cacheKey = '';
+    let releaseCacheKey = () => {};
+    if (cache) {
+      const outcome = await cache.begin(request, received, questions, operation.signal, responseHeaders);
+      cacheKey = outcome.key;
+      releaseCacheKey = outcome.release;
+      if (outcome.replay !== undefined) {
+        releaseCacheKey();
+        return new Response(outcome.replay, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
+    }
+    try {
+    let choice = eligible.length === 1 ? eligible[0]! : config.selector;
+    let selectionUsage: Usage = { input: 0n, output: 0n };
+    if (selectorRequest) {
       let selected;
       try {
-        selected = await callBackend(selectorBackend, payload, selectorQuestions, operation.signal, fetcher);
+        selected = await callBackend(selectorRequest.backend, selectorRequest.payload, selectorRequest.questions, operation.signal, fetcher,
+          logging && { ...logging, scope: 'selector' });
       } catch (failure) {
         if (!(failure instanceof APIError) || !config.fallback) throw failure;
         choice = config.fallback;
@@ -201,7 +247,8 @@ async function systemOne(request: Request, config: GatewayConfig, fetcher: typeo
     const destination = config.backends.get(choice);
     if (!destination) throw new APIError(502, 'invalid_selector', 'Upstream selected an unconfigured backend');
     if (!supports(destination, state.kind === 'string', shapes)) throw new APIError(422, 'unsupported_capability', 'Selected backend does not support these inputs');
-    const leaf = await callBackend(destination, replaceFields(original, new Map([['model', quote(destination.model)]])), questions, operation.signal, fetcher);
+    const leaf = await callBackend(destination, replaceFields(original, new Map([['model', quote(destination.model)]])), questions, operation.signal, fetcher,
+      logging && { ...logging, scope: 'backend' });
     if (selectionUsage.input > INT64_MAX - leaf.usage.input || selectionUsage.output > INT64_MAX - leaf.usage.output) {
       throw new APIError(502, 'invalid_usage', 'Upstream token usage cannot be aggregated');
     }
@@ -215,13 +262,16 @@ async function systemOne(request: Request, config: GatewayConfig, fetcher: typeo
     } catch {
       throw new APIError(502, 'invalid_response', 'Upstream response cannot be returned as SystemOneResponse');
     }
+    await cache?.remember(cacheKey, leaf.body);
     return new Response(response, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    } finally { releaseCacheKey(); }
   } finally { operation.close(); }
 }
 
 // Host-neutral: loadConfig validates registry/secrets/assets, then the same
 // application works with app.fetch(Request), Node HTTP, or a Worker fetch event.
 export function createGateway(config: GatewayConfig, dependencies: GatewayDependencies = {}): Hono {
+  const { cache, logger } = dependencies;
   const automaticModel = {
     name: config.name,
     description: 'A SystemOne Choice selects the configured TypeSafe-compatible backend best suited to the supplied state and questions.',
@@ -246,17 +296,64 @@ export function createGateway(config: GatewayConfig, dependencies: GatewayDepend
   app.all('*', async context => {
     const request = context.req.raw;
     let path: string;
-    try { path = decodeURIComponent(new URL(request.url).pathname); } catch { path = ''; }
-    const method = path === '/v1/models' || path === '/v1/capabilities' ? 'GET' : path === '/v1/systemone' ? 'POST' : undefined;
-    if (!method) return errorResponse(new APIError(404, 'not_found', 'Endpoint not found'));
-    const provided = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(request.headers.get('Authorization') ?? '')));
-    const expected = new Uint8Array(await keyHash);
-    let difference = 0;
-    for (let index = 0; index < expected.length; index++) difference |= provided[index]! ^ expected[index]!;
-    if (difference !== 0) return errorResponse(new APIError(401, 'unauthorized', 'A valid bearer API key is required'), { 'WWW-Authenticate': 'Bearer' });
-    if (request.method !== method) return errorResponse(new APIError(405, 'method_not_allowed', 'Method not allowed'), { Allow: method });
-    if (method === 'GET') return new Response(path === '/v1/capabilities' ? capabilities : catalogue, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
-    return systemOne(request, config, fetcher, template);
+    let logPath: string;
+    try { logPath = new URL(request.url).pathname; } catch { logPath = ''; }
+    try { path = decodeURIComponent(logPath); } catch { path = ''; }
+    const responseHeaders: Record<string, string> = {};
+    let exchange: LogExchange | undefined;
+    let captured: CapturedBody | undefined;
+    let requestID = '';
+    try {
+      if (logger) {
+        requestID = crypto.randomUUID();
+        const bodyRead = deadline(request.signal, 30_000);
+        try { captured = await captureBounded(request.body, BODY_LIMIT, bodyRead.signal); }
+        finally { bodyRead.close(); }
+        // Includes malformed requests, unknown endpoints, and authentication
+        // rejects. No routing or inference runs until this append is durable.
+        exchange = await logger.begin(requestID, 'gateway', request.method, logPath, captured);
+      }
+      let response: Response;
+      let errorCode: string | undefined;
+      try {
+        const method = path === '/v1/models' || path === '/v1/capabilities' ? 'GET' : path === '/v1/systemone' ? 'POST' : undefined;
+        if (!method) throw new APIError(404, 'not_found', 'Endpoint not found');
+        const provided = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(request.headers.get('Authorization') ?? '')));
+        const expected = new Uint8Array(await keyHash);
+        let difference = 0;
+        for (let index = 0; index < expected.length; index++) difference |= provided[index]! ^ expected[index]!;
+        if (difference !== 0) {
+          responseHeaders['WWW-Authenticate'] = 'Bearer';
+          throw new APIError(401, 'unauthorized', 'A valid bearer API key is required');
+        }
+        if (request.method !== method) {
+          responseHeaders.Allow = method;
+          throw new APIError(405, 'method_not_allowed', 'Method not allowed');
+        }
+        response = method === 'GET'
+          ? new Response(path === '/v1/capabilities' ? capabilities : catalogue, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
+          : await systemOne(request, config, fetcher, template, cache, responseHeaders, logger && { logger, requestID }, captured);
+      } catch (failure) {
+        // Do not retry the failed upstream event or activate fallback. A final
+        // gateway response is a distinct event and may still be committed.
+        const error = failure instanceof LoggingUnavailable
+          ? new APIError(503, 'logging_unavailable', 'Exchange logging is unavailable')
+          : failure instanceof APIError ? failure : new APIError(500, 'internal_error', 'Request could not be completed');
+        errorCode = error.code;
+        response = errorResponse(error);
+      }
+      for (const [name, value] of Object.entries(responseHeaders)) response.headers.set(name, value);
+      if (exchange) {
+        // Audit the generated response, not a claim that the client received it.
+        const body = await captureBounded(response.clone().body, BODY_LIMIT, new AbortController().signal);
+        await exchange.record('response', body, response.status, response.headers.get('X-One-System-Cache') ?? undefined, errorCode);
+      }
+      return response;
+    } catch (failure) {
+      return errorResponse(failure instanceof LoggingUnavailable
+        ? new APIError(503, 'logging_unavailable', 'Exchange logging is unavailable')
+        : new APIError(500, 'internal_error', 'Request could not be completed'), responseHeaders);
+    }
   });
   return app;
 }

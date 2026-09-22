@@ -12,6 +12,8 @@ export interface Backend {
   readonly id: string;
   readonly baseURL: string;
   readonly model: string;
+  // Credential binding names participate in decision-cache configuration keys.
+  readonly apiKeyEnv: string;
   readonly description: string;
   readonly key: string;
   readonly limits?: BackendLimits;
@@ -165,7 +167,7 @@ export async function loadConfig(source: string, dependencies: ConfigDependencie
         ...(structuredState === undefined ? {} : { structuredState }),
       };
     }
-    backends.set(id, { id, model, description, key, baseURL: url, ...(limits === undefined ? {} : { limits }), ...(capabilities === undefined ? {} : { capabilities }) });
+    backends.set(id, { id, model, description, key, apiKeyEnv: keyName, baseURL: url, ...(limits === undefined ? {} : { limits }), ...(capabilities === undefined ? {} : { capabilities }) });
   }
   const selector = stringField(registry.get('selector'));
   const fallback = stringField(registry.get('fallback'));

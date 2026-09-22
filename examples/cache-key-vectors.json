@@ -1,0 +1,23 @@
+[
+  {
+    "name": "large-integer-a",
+    "namespace": "default",
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "request": "{\"model\":\"one-system\",\"state\":{\"id\":9007199254740992},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is the ID odd?\"}}}",
+    "sha256": "71fba080d28cfbc83672338426d613aa3494f8230a3f8aaa99c1716bd31b97d9"
+  },
+  {
+    "name": "large-integer-b",
+    "namespace": "default",
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "request": "{\"model\":\"one-system\",\"state\":{\"id\":9007199254740993},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Is the ID odd?\"}}}",
+    "sha256": "c5e8f0a8580e32c95e5b1203880824febd820d4c008e4f83fe86e117b99501b2"
+  },
+  {
+    "name": "utf8-and-array",
+    "namespace": "équipe",
+    "revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "request": "{\"model\":\"one-system\",\"state\":[\"雪\",1,2],\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":\"Contains snow?\"}}}",
+    "sha256": "5d203233efb3d1fe5809789fe9a4b8a09f7c9f8513bea5e1cdf8f4eb130aa0e5"
+  }
+]

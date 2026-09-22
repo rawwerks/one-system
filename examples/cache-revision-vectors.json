@@ -1,0 +1,168 @@
+{
+  "_purpose": "Cross-runtime decision-cache protocol vectors consumed by BOTH implementations: cache_revision_test.go and hono/src/cache.test.ts. asset_digests pins the exact file bytes each host hashes; revisions pin the configuration-revision protocol independently of those files; durations pin the operator TTL syntax. Registries and question files are RAW TEXT because the protocol hashes exact bytes, including whitespace.",
+  "asset_digests": {
+    "contract/backend-selection.question.json": {
+      "sha256": "6725c4dbde92c7175eb38b8a31f2f8ad4876862ffb94b48d85148c39dc3a186d"
+    },
+    "schema/typesafe.openapi.json": {
+      "sha256": "72452d6951dbaadd1030af76434917ef103e470bf0cd6ac035b02b111bfd4d24"
+    }
+  },
+  "durations": [
+    {
+      "nanoseconds": "0",
+      "text": "0"
+    },
+    {
+      "nanoseconds": "1000000",
+      "text": "1ms"
+    },
+    {
+      "nanoseconds": "3600000000000",
+      "text": "1h"
+    },
+    {
+      "nanoseconds": "31536000000000000",
+      "text": "8760h"
+    },
+    {
+      "nanoseconds": "5400000000000",
+      "text": "1.5h"
+    },
+    {
+      "nanoseconds": "9900000000000",
+      "text": "2h45m"
+    },
+    {
+      "nanoseconds": "500000",
+      "text": "500us"
+    },
+    {
+      "nanoseconds": "500000",
+      "text": "500µs"
+    },
+    {
+      "nanoseconds": "500000",
+      "text": "500μs"
+    },
+    {
+      "nanoseconds": "1",
+      "text": "1ns"
+    },
+    {
+      "nanoseconds": "100500000",
+      "text": "100.5ms"
+    },
+    {
+      "nanoseconds": "-3600000000000",
+      "text": "-1h"
+    },
+    {
+      "nanoseconds": "60000000000",
+      "text": "+1m"
+    },
+    {
+      "nanoseconds": "0",
+      "text": "0.0000000001s"
+    },
+    {
+      "nanoseconds": "1999999999",
+      "text": "1.9999999999s"
+    },
+    {
+      "nanoseconds": "9223372036854775807",
+      "text": "9223372036854775807ns"
+    },
+    {
+      "invalid": true,
+      "text": "1e3ms"
+    },
+    {
+      "invalid": true,
+      "text": ""
+    },
+    {
+      "invalid": true,
+      "text": "1"
+    },
+    {
+      "invalid": true,
+      "text": "h"
+    },
+    {
+      "invalid": true,
+      "text": "1x"
+    },
+    {
+      "invalid": true,
+      "text": "9223372036854775808ns"
+    },
+    {
+      "invalid": true,
+      "text": "1.5"
+    }
+  ],
+  "revisions": [
+    {
+      "api_key": "public-key-canary",
+      "epoch": "epoch-1",
+      "name": "minimal-no-selection",
+      "openapi_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "questions": {},
+      "registry": "{\"name\":\"routing-demo\",\"selector\":\"local\",\"backends\":[{\"id\":\"local\",\"base_url\":\"https://leaf.example.invalid/v1/\",\"model\":\"leaf-model\",\"api_key_env\":\"LOCAL_API_KEY\",\"description\":\"Local leaf\"}]}",
+      "revision": "625584762e28fa619f12affc178e341ce8c636a9005df11143784098f282b912",
+      "secrets": {
+        "LOCAL_API_KEY": "leaf-key"
+      },
+      "selector_question_digest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f"
+    },
+    {
+      "api_key": "public-key-canary",
+      "epoch": "epoch-2",
+      "name": "selection-two-questions",
+      "openapi_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "questions": {
+        "routing.questions.v1.json": "{\n  \"needs_reasoning\": {\"type\": \"noul\", \"instructions\": \"Does this need careful reasoning?\"},\n  \"topic\": {\n    \"type\":  \"choice\",\n    \"instructions\": \"Which topic is this?\",\n    \"criteria\": { \"legal \u0026 \u003cpolicy\u003e\": \"Legal or policy work\", \"other\": \"Anything else\" }\n  }\n}\n"
+      },
+      "registry": "{\"name\": \"routing_demo-2\", \"selector\": \"hosted\", \"fallback\": \"local\", \"escalation_confidence\": 0.8, \"selection\": {\"questions_file\": \"routing.questions.v1.json\", \"escalate_to\": \"hosted\", \"rules\": [{\"question\": \"needs_reasoning\", \"above\": 0.7}, {\"question\": \"topic\", \"choice\": \"legal \u0026 \u003cpolicy\u003e\", \"above\": 0.25}]}, \"backends\": [{\"id\": \"local\", \"base_url\": \"http://127.0.0.1:1\", \"model\": \"leaf\", \"api_key_env\": \"LOCAL_API_KEY\", \"description\": \"Local leaf\", \"limits\": {\"max_characters\": 1000, \"max_non_ascii_letter_fraction\": 0.5, \"max_questions\": 4, \"max_criteria\": 8}, \"capabilities\": {\"question_types\": [\"noul\", \"choice\"], \"max_questions\": 4, \"min_criteria\": 2, \"max_criteria\": 8, \"structured_state\": true}}, {\"id\": \"hosted\", \"base_url\": \"https://hosted.example.invalid\", \"model\": \"selector\", \"api_key_env\": \"HOSTED_API_KEY\", \"description\": \"Hosted selector\"}]}",
+      "revision": "ec6cdb7f629c9c23f300a7469be35a77556df1eebb16a91af58701e24ca7e0eb",
+      "secrets": {
+        "HOSTED_API_KEY": "selector-key",
+        "LOCAL_API_KEY": "leaf-key"
+      },
+      "selector_question_digest": "2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f"
+    },
+    {
+      "api_key": "clé-publique",
+      "epoch": "époque-3",
+      "name": "partial-limits-and-unicode",
+      "openapi_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "questions": {
+        "q.unicode.json": "{\"\\u96ea\":{\"type\":\"noul\",\"instructions\":\"Neige ?\"},\"\\u00e9quipe\":{\"type\":\"noul\",\"instructions\":\"\\u00c9quipe ?\"}}"
+      },
+      "registry": "{\"name\": \"privacy-demo\", \"selector\": \"sel\", \"fallback\": \"leaf\", \"selection\": {\"questions_file\": \"q.unicode.json\", \"escalate_to\": \"sel\", \"rules\": [{\"question\": \"雪\", \"above\": 1}, {\"question\": \"équipe\", \"above\": 0}]}, \"backends\": [{\"id\": \"leaf\", \"base_url\": \"http://localhost:8080\", \"model\": \"leaf-模型\", \"api_key_env\": \"LEAF_KEY\", \"description\": \"Leaf — 私的\", \"limits\": {\"max_questions\": 2}}, {\"id\": \"sel\", \"base_url\": \"https://sel.example.invalid\", \"model\": \"sel\", \"api_key_env\": \"SEL_KEY\", \"description\": \"Sélecteur\", \"capabilities\": {\"question_types\": [\"noul\"]}}]}",
+      "revision": "bbc98edc62b480e0ecace6d2c5416b10d82f5aa200d762dde9f4e97c75698627",
+      "secrets": {
+        "LEAF_KEY": "leaf-key",
+        "SEL_KEY": "sel-key"
+      },
+      "selector_question_digest": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f"
+    },
+    {
+      "api_key": "public-key-canary",
+      "epoch": "epoch-4",
+      "name": "awkward-floats",
+      "openapi_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+      "questions": {
+        "f.json": "{\"r\":{\"type\":\"noul\",\"instructions\":\"?\"}}"
+      },
+      "registry": "{\"name\":\"floats\",\"selector\":\"b\",\"fallback\":\"a\",\"escalation_confidence\":1e-7,\"selection\":{\"questions_file\":\"f.json\",\"escalate_to\":\"b\",\"rules\":[{\"question\":\"r\",\"above\":0.30000000000000004},{\"question\":\"r\",\"above\":-0.0},{\"question\":\"r\",\"above\":1}]},\"backends\":[{\"id\":\"a\",\"base_url\":\"http://127.0.0.1:1\",\"model\":\"a\",\"api_key_env\":\"A_KEY\",\"description\":\"a\",\"limits\":{\"max_characters\":1,\"max_non_ascii_letter_fraction\":1e-7,\"max_questions\":1,\"max_criteria\":2}},{\"id\":\"b\",\"base_url\":\"http://127.0.0.1:2\",\"model\":\"b\",\"api_key_env\":\"B_KEY\",\"description\":\"b\",\"capabilities\":{\"question_types\":[\"noul\"],\"structured_state\":false}}]}",
+      "revision": "1f8954082f9e3689a9e010339c5647a755f4258fdf7c60ec16bccf2d9ccdac78",
+      "secrets": {
+        "A_KEY": "a-key",
+        "B_KEY": "b-key"
+      },
+      "selector_question_digest": "4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f"
+    }
+  ]
+}

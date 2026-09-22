@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Json } from './semantic.ts';
 import type { Scenario } from './scenarios.ts';
+import { collectPersistenceWorker } from './persistence-worker.ts';
 
 export function artifactDirectory(root: string, prefix: string): string {
   const base = join(root, '.build/scenarios');
@@ -131,6 +132,7 @@ export async function collectWorker(root: string): Promise<Scenario[]> {
       const last = captures.at(-1);
       record(`upstream-${upstreamStatus}`, `An upstream ${upstreamStatus} must produce a client-facing ${expectedStatus} response with canonical sanitized ${errorType}, with no retry. The public response body must omit the private upstream body and both credentials; the captured backend request must use the configured backend credential and fixed-length framing. Credentials in the synthetic input fixture or captured backend request are not client-facing disclosure.`, { client_request: { path: '/v1/systemone', authorization: `Bearer ${PUBLIC_KEY}`, body: sent }, upstream_requests: captures.slice(before), upstream_responses: upstreamResponses.slice(before), public_response: response }, response.status === expectedStatus && JSON.stringify(JSON.parse(response.body)) === JSON.stringify({ detail: [{ loc: ['body'], msg: message, type: errorType }] }) && [CAUSE, PUBLIC_KEY, BACKEND_KEY].every(secret => !response.body.includes(secret)) && captures.length === before + 1 && last?.authorization === `Bearer ${BACKEND_KEY}` && last.content_length === String(Buffer.byteLength(last.body)) && last.transfer_encoding === null);
     }
+    result.push(...await collectPersistenceWorker(root));
     writeFileSync(join(output, 'observations.json'), JSON.stringify(result, null, 2), { mode: 0o600 });
     return result;
   } finally {
