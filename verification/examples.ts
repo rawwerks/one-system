@@ -322,9 +322,65 @@ export async function collectExamples(root: string): Promise<Record[]> {
 
   await evidenceScenarios();
   await releaseScenarios();
+  await audienceScenarios();
   await ensembleScenarios();
   save(join(scratch, 'observations.json'), records);
   return records;
+
+  async function audienceScenarios(): Promise<void> {
+    const questionsPath = join(root, 'examples/file-audience.questions.json');
+    const questions = read(questionsPath);
+    const generated = read(join(root, 'examples/file-audience.fixtures.json')).cases.find((entry: ObjectValue) => entry.id === 'generated-data');
+    if (!generated) throw new Error('audience_generated_fixture_missing');
+    const audienceIDs = ['audience.internal_humans', 'audience.external_humans', 'audience.internal_agents', 'audience.external_agents'];
+    const wholeFile = {
+      path: 'synthetic/shared-guide.txt',
+      content: 'Human maintainers: develop this project using the source and contribution procedure below.\r\n'
+        + 'Human users: install this project and integrate its documented API using the examples below.\r\n'
+        + 'Shared reference material. '.repeat(260)
+        + '\r\nMaintenance agents: edit this project, run its checks, and report changed behavior.\r\n'
+        + 'Integration agents: use this project in other applications, follow its API, and report integration results.\r\n',
+    };
+    const contract = 'The actual system_one_check.py review CLI sends one complete file as state.path and exact state.content with the four versioned audience Nouls in one native HTTP request under the explicit model. It must not split at the release chunk limit, truncate, normalize or choose a winning audience. A complete typed response may have all four probabilities high or all four zero; either is a valid exchange, not audience suitability or release approval. Successful review preserves raw answers, model, usage and request/response wire bodies and exits 0. A missing or wrong-type audience answer or rejected request exits 2 with empty stdout, a failed review report and no successful response artifact; it must not guess labels, retry or produce a none-audience success. These synthetic replies test composition and transport, not model judgment accuracy.';
+    for (const variant of ['all-four-whole-file', 'none', 'missing-answer', 'invalid-answer', 'request-too-large']) {
+      const state = variant === 'none' ? { path: generated.path as string, content: generated.content as string } : wholeFile;
+      const base = join(scratch, `audience-${variant}`); mkdirSync(base);
+      const statePath = join(base, 'state.json'), output = join(base, 'review');
+      save(statePath, state);
+      const supplied: ObjectValue = { model: 'audience-fixture-v1', answers: Object.fromEntries(audienceIDs.map((id, index) => [id, { type: 'noul', noul: variant === 'none' ? 0 : [.91, .93, .95, .97][index] }])), usage: { input_tokens: 17, output_tokens: 4 } };
+      if (variant === 'missing-answer') delete supplied.answers['audience.external_agents'];
+      if (variant === 'invalid-answer') supplied.answers['audience.external_agents'] = choice('yes', { yes: 1 });
+      const successful = variant === 'all-four-whole-file' || variant === 'none';
+      await server(() => variant === 'request-too-large'
+        ? { status: 413, body: { error: { message: 'AUDIENCE_TRANSPORT_CANARY request exceeds context limit' } } }
+        : { body: supplied }, async (endpoint, calls) => {
+        const argv = ['review', '--endpoint', endpoint, '--key-env', 'ONE_SYSTEM_TEST_KEY', '--model', 'audience-fixture', '--expected-model', 'audience-fixture-v1', '--state', statePath, '--questions', questionsPath, '--output', output];
+        const result = await cli('system_one_check', argv, { ONE_SYSTEM_TEST_KEY: 'public-loopback-fixture' });
+        const artifact = (name: string): ObjectValue | null => existsSync(join(output, name)) ? read(join(output, name)) : null;
+        const report = artifact('report.json'), savedResponse = artifact('response.json');
+        const savedRequest = artifact('request.json'), requestWire = artifact('review-request-wire.json'), responseWire = artifact('review-response-wire.json');
+        const sent = calls[0];
+        const requestMatches = (value: ObjectValue | null): boolean => !!value && value.model === 'audience-fixture' && same(value.state, state) && same(value.questions, questions);
+        const oneWholeFile = calls.length === 1 && sent.path === '/v1/systemone' && sent.authorized && requestMatches(sent.body)
+          && same(Object.keys(questions).sort(), [...audienceIDs].sort()) && audienceIDs.every(id => questions[id].type === 'noul');
+        const evidenceMatches = requestMatches(savedRequest)
+          && (requestWire === null ? !successful : requestMatches(requestWire))
+          && (responseWire === null ? !successful : same(responseWire, sent?.response.body));
+        const outcomeValid = successful
+          ? result.exit === 0 && result.stderr === '' && report?.passed === true && same(parse(result.stdout), report)
+            && same(savedResponse, supplied) && same(sent?.response.body, supplied)
+          : result.exit === 2 && result.stdout === '' && result.stderr.trim() !== '' && report?.passed === false
+            && typeof report.error?.code === 'string' && savedResponse === null;
+        record(`audience.${variant}`, contract, {
+          scope: 'Actual review CLI and official SDK with synthetic HTTP responses; no live audience accuracy claim and no admission gate.',
+          input: { argv, state, wholeFileCharacters: state.content.length, releaseChunkBoundaryCharacters: 6000 },
+          calls, result: serializableRun(result), report, savedResponse,
+          persistedEvidence: { artifactNames: readdirSync(output).sort(), requestMatchesInput: requestMatches(savedRequest), requestWireMatchesInput: requestWire === null ? null : requestMatches(requestWire), responseWireMatchesHTTP: responseWire === null ? null : same(responseWire, sent?.response.body) },
+        }, oneWholeFile && evidenceMatches && outcomeValid
+          && !['Traceback', 'AUDIENCE_TRANSPORT_CANARY', 'public-loopback-fixture'].some(value => (result.stdout + result.stderr).includes(value)));
+      });
+    }
+  }
 
   async function ensembleScenarios(): Promise<void> {
     const fixture = read(join(root, 'examples/laya-jev-ensemble.json'));
@@ -553,7 +609,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
     record('admission.integer-precision', parityContract, { input: { function: 'same', rawJSONArguments: '[9007199254740992,9007199254740993,0.000001]', numericTypeAfterJSONDecode: 'Python int', tolerance: 1e-6 }, implementationExcerpt: excerpt('system_one_check', ['same']), outcome: actual }, integers.exit === 0 && actual.ok && actual.value === false);
   }
   async function releaseScenarios(): Promise<void> {
-    const contract = 'Public-release review lists files through Git, so ignored files are never opened or sent, including a file tracked despite the ignore rules, which is reported unreviewed; symbolic links are reported unreviewed, never followed. Every chunk is ONE native System One request carrying the whole versioned battery under the explicit --model. Nothing is sent without --confirm-send. Code thresholds turn Noul, Choice and Score answers into pass, note, review or block. Output holds answers and paths, never file content. Findings or unreviewed paths exit 1; refusals and failures exit 2. With --history, blobs reachable from refs but absent from the index are reviewed too; a historical path that current ignore rules exclude is reported unreviewed, which makes the run exit 1 even without model findings, and its content is never sent. Text already answered in the same output ledger is not sent again, within a run or across resumed runs.';
+    const contract = 'Public-release review lists files through Git, so ignored files are never opened or sent, including a file tracked despite the ignore rules, which is reported unreviewed; symbolic links are reported unreviewed, never followed. Every chunk is ONE native System One request carrying the whole versioned hazard battery under the explicit --model. Nothing is sent without --confirm-send. Code thresholds turn hazard Nouls and exposure Score answers into pass, note, review or block; intended audience is not a release hazard. Output holds answers and paths, never file content. Findings or unreviewed paths exit 1; refusals and failures exit 2. With --history, blobs reachable from refs but absent from the index are reviewed too; a historical path that current ignore rules exclude is reported unreviewed, which makes the run exit 1 even without model findings, and its content is never sent. Text already answered in the same output ledger is not sent again, within a run or across resumed runs.';
     const policySource = excerpt('public_release_review', ['list_files', 'decide']);
     const battery = read(join(root, 'examples/public-release.questions.json'));
     const repo = join(scratch, 'release-repo'); mkdirSync(join(repo, 'src'), { recursive: true });
@@ -571,9 +627,9 @@ export async function collectExamples(root: string): Promise<Record[]> {
     const reply = (body: ObjectValue): ObjectValue => ({ model: 'fixture-v1', usage: { input_tokens: 5, output_tokens: 1 }, answers: Object.fromEntries(Object.entries(body.questions).map(([id, raw]) => {
       const question = raw as ObjectValue;
       if (question.type === 'noul') return [id, { type: 'noul', noul: body.state.path === 'src/flagged.txt' && id === 'leak.secret' ? .95 : .02 }];
-      const keys = question.type === 'score' ? question.criteria.map((_: unknown, i: number) => String(i)) : Object.keys(question.criteria);
+      const keys = question.criteria.map((_: unknown, i: number) => String(i));
       const probabilities = Object.fromEntries(keys.map((key: string, i: number) => [key, Number(i === 0)]));
-      return [id, question.type === 'score' ? { type: 'score', score: 0, confidence: 1, probabilities, legend: Object.fromEntries(question.criteria.map((v: unknown, i: number) => [String(i), v])) } : { type: 'choice', choice: keys[0], confidence: 1, probabilities }];
+      return [id, { type: 'score', score: 0, confidence: 1, probabilities, legend: Object.fromEntries(question.criteria.map((v: unknown, i: number) => [String(i), v])) }];
     })) });
     await server(body => ({ body: reply(body) }), async (endpoint, calls) => {
       const bound = { TYPESAFE_ENDPOINT: endpoint, TYPESAFE_API_KEY: 'public-loopback-fixture' };
@@ -633,16 +689,16 @@ export async function collectExamples(root: string): Promise<Record[]> {
     });
     const thresholds = { review_threshold: .35, action_threshold: .7, severity_block: 2 };
     const hazards = Object.keys(battery).filter(id => battery[id].type === 'noul');
-    const answers = (nouls: ObjectValue, severity = 0, insiders = 0): ObjectValue => ({ ...Object.fromEntries(hazards.map(id => [id, { noul: nouls[id] ?? .02 }])), 'audience.intended_reader': { probabilities: { public_users: 1 - insiders, contributors: 0, insiders_only: insiders, machines: 0 } }, 'severity.exposure': { score: severity } });
+    const answers = (nouls: ObjectValue, severity = 0): ObjectValue => ({ ...Object.fromEntries(hazards.map(id => [id, { noul: nouls[id] ?? .02 }])), 'severity.exposure': { score: severity } });
     const cases: [string, ObjectValue, string][] = [
       ['quiet', answers({}), 'pass'], ['secret-at-action', answers({ 'leak.secret': .7 }), 'block'],
       ['path-below-review', answers({ 'leak.local_path': .349 }), 'pass'], ['path-at-review', answers({ 'leak.local_path': .35 }), 'review'],
       ['review-upgraded-by-severity', answers({ 'leak.local_path': .5 }, 2), 'block'], ['severity-alone', answers({}, 3), 'review'],
       ['note-at-action', answers({ 'reputation.admits_unfinished_work': .9 }), 'note'], ['note-in-review-band', answers({ 'reputation.admits_unfinished_work': .5 }), 'pass'],
-      ['insiders-choice', answers({}, 0, .7), 'review'],
+      ['private-notes-hazard', answers({ 'audience.internal_notes': .7 }), 'review'],
     ];
     const outcomes = [];
     for (const [id, supplied, expected] of cases) outcomes.push({ id, supplied, expected, actual: await call('public_release_review', 'decide', [supplied, thresholds]) });
-    record('release.policy', contract, { input: { function: 'decide', policy: thresholds }, implementationExcerpt: excerpt('public_release_review', ['decide']), cases: outcomes }, outcomes.every(o => o.actual.ok && o.actual.value.action === o.expected));
+    record('release.policy', 'A direct decide invocation composes supplied hazard Nouls and exposure severity only; it does not infer who a file is for. Below-threshold hazards pass, including public maintainer guidance with no reported privacy hazard. A reported private-notes hazard at the action threshold still requires review. Action/review thresholds are inclusive, exposure severity upgrades review findings to block, severity alone requires review, and advisory note hazards below the action threshold remain pass. These synthetic answers test policy composition, not whether a model correctly detects private notes.', { input: { function: 'decide', policy: thresholds }, implementationExcerpt: excerpt('public_release_review', ['decide']), cases: outcomes }, outcomes.every(o => o.actual.ok && o.actual.value.action === o.expected));
   }
 }

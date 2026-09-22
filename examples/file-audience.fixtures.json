@@ -1,0 +1,41 @@
+{
+  "description": "Complete synthetic files with intended audience labels for inspecting Jev judgments. These labels describe authored controls, not model outputs or a calibrated acceptance threshold. Internal means developing this project; external means using it. Multiple audiences, including none, are valid.",
+  "cases": [
+    {
+      "id": "shared-maintenance",
+      "path": "contributing.txt",
+      "content": "Maintaining this project\n\nHuman contributors and coding agents working on this repository follow the same workflow. Before editing routing behavior, read the shared HTTP contract. Keep the Go and Hono implementations independent and update both when the contract changes. Run the shared conformance checks and inspect any failure before proposing the change. Use public synthetic fixtures; never commit credentials or local inference logs.\n",
+      "expected": { "internal_humans": true, "external_humans": false, "internal_agents": true, "external_agents": false }
+    },
+    {
+      "id": "shared-consumption",
+      "path": "api-usage.txt",
+      "content": "Calling the service\n\nThis guide is for application developers and their AI agents integrating the running service, not changing its implementation. Obtain the service origin and API key from your operator. Send an authenticated POST to /v1/systemone with model, state and questions. Each Noul question returns a probability of yes. Ask separate Noul questions when several labels can apply at once. Keep the key server-side, retain the typed answers, and implement your application's decision policy in your own code.\n",
+      "expected": { "internal_humans": false, "external_humans": true, "internal_agents": false, "external_agents": true }
+    },
+    {
+      "id": "mixed-file",
+      "path": "project-guide.txt",
+      "content": "Project guide for people and AI agents\n\nUsing the project\nHuman users and integrating agents send typed questions to the running HTTP service. Read the model list, choose a supported model, authenticate requests and validate typed responses. Application code decides how to use the answers.\n\nDeveloping the project\nHuman maintainers and coding agents working on the implementation must preserve that public contract. Read the existing tests before changing a route, keep inference engines outside the gateway, and run conformance against both implementations. Do not change the API merely to make a local test pass.\n",
+      "expected": { "internal_humans": true, "external_humans": true, "internal_agents": true, "external_agents": true }
+    },
+    {
+      "id": "generated-data",
+      "path": "generated-checksums.json",
+      "content": "{\"format\":1,\"generated\":true,\"entries\":[{\"name\":\"bundle-a\",\"bytes\":120},{\"name\":\"bundle-b\",\"bytes\":240}]}\n",
+      "expected": { "internal_humans": false, "external_humans": false, "internal_agents": false, "external_agents": false }
+    },
+    {
+      "id": "human-governance",
+      "path": "maintainer-voting.txt",
+      "content": "Maintainer voting rules\n\nThis document addresses the project's human maintainers. Each maintainer has one vote in the annual steering election. Nominees must consent to standing, disclose conflicts of interest to the other maintainers, and abstain when voting on their own appointment. Decisions are made by the humans, not by coding assistants. AI agents have no vote and are not the audience of these governance instructions.\n",
+      "expected": { "internal_humans": true, "external_humans": false, "internal_agents": false, "external_agents": false }
+    },
+    {
+      "id": "agent-helping-user",
+      "path": "integration-agent.txt",
+      "content": "Instructions to the user's integration agent\n\nYou are an AI assistant helping someone use the running service. Discover the available models, ask the user which endpoint they trust, and construct a minimal native API request. Do not change the service implementation. Keep the user's credentials out of your response. Explain the returned typed answers to the user and leave application decisions in their code. These instructions address you, the consuming agent; your human user is the beneficiary, not the reader being instructed.\n",
+      "expected": { "internal_humans": false, "external_humans": false, "internal_agents": false, "external_agents": true }
+    }
+  ]
+}

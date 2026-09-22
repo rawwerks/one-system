@@ -139,3 +139,68 @@ including corrupted evidence and contradictory answers. The offline collector
 requires no inference credentials. `make verify` passes these observed outcomes
 to versioned System One questions; failed exact checks or missing evidence can
 never become a positive verification.
+
+## Review who a whole file is written for
+
+When reader fit matters, use the existing `review` command with
+[`file-audience.questions.json`](../file-audience.questions.json). Its four
+independent native Nouls ask whether **this file as written** is for:
+
+| Question | Reader |
+| --- | --- |
+| `audience.internal_humans` | People maintaining or developing this project |
+| `audience.external_humans` | People using, integrating or evaluating this project |
+| `audience.internal_agents` | AI agents maintaining or developing this project |
+| `audience.external_agents` | AI agents using, integrating or evaluating this project |
+
+These are overlapping roles, not a single-choice taxonomy: multiple audiences,
+all four, or none can apply. Each answer is its own probability of yes; the four
+values need not sum to one. Public contributor guidance can be internal-facing.
+Audience is neither confidentiality nor a quality grade, and a human-readable
+file is not automatically written for agents merely because an agent can read it.
+
+Judge the addressed reader, not someone an agent is helping. A substantive
+section for an audience counts even when other sections address different
+readers. Contributor setup and dogfooding to develop this project are internal
+work; using the product in another application is an external role.
+
+Use the output to inspect unexpected reader assumptions, not to rewrite a file
+until a probability rises. The labeled controls include mixed audiences,
+generated data, human-only governance and an agent helping a human. They expose
+primary-audience and reader/beneficiary confusion; they do not establish accuracy
+on arbitrary repository files or justify an automatic audience gate.
+
+Use the prepared environment and pinned gateway described above, with
+`ONE_SYSTEM_API_KEY` exported locally. After reviewing the specifically selected
+public `README.md` for private content, run from the repository root:
+
+```sh
+mkdir -p evidence/local
+jq -n --arg path README.md --rawfile content README.md \
+  '{path: $path, content: $content}' > evidence/local/file-audience-state.json
+.build/example-venv/bin/python examples/system_one_check.py review \
+  --endpoint http://127.0.0.1:8092 --model hosted --expected-model jev-1.13.0 \
+  --state evidence/local/file-audience-state.json \
+  --questions examples/file-audience.questions.json \
+  --output evidence/local/file-audience-review
+```
+
+`state.path` identifies the file; `state.content` is its complete, exact text,
+including the end of the file. The questions treat source content as data, not
+instructions to obey. Do not send excerpts, silently truncate, or aggregate chunk
+answers into a whole-file classification. If the complete request exceeds a
+gateway/backend limit, report the explicit failure and no audience result; other
+failed requests are not audience answers either.
+
+The existing export warning applies: hosted evaluation sends the entire selected
+file off-machine. Keep the state and evidence ignored under `evidence/local/`;
+choose a new output directory for each run. Unlike the chunked release report,
+this evidence includes source content in request bodies, along with raw answers,
+returned model and wire bodies. `passed: true` means a valid exchange with the
+expected model, not audience suitability or quality approval.
+
+[`file-audience.fixtures.json`](../file-audience.fixtures.json) supplies labeled
+whole-file controls for evaluating model judgments, not authoritative model
+outputs or a claim of accuracy. This optional review adds no release gate,
+required receipt or file header. Privacy/exposure checks remain the separate
+[chunk-based public-release review](../../docs/public-release-review.md).

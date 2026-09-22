@@ -11,7 +11,7 @@ Every chunk is one request that carries the whole [versioned question battery](.
 | Angle | Questions |
 | --- | --- |
 | What leaks | `leak.secret`, `leak.local_path`, `leak.personal_data`, `leak.private_infrastructure`, `leak.recorded_run`, `leak.confidential_business` |
-| Who it was written for | `audience.internal_notes`, `audience.assumes_private_access`, and the `audience.intended_reader` Choice |
+| Internal/private-context hazards | `audience.internal_notes`, `audience.assumes_private_access` |
 | How it reads to outsiders | `reputation.disparaging_remark`, `reputation.admits_unfinished_work` |
 | What helps an attacker | `security.unfixed_weakness` |
 | Whose work it is | `ownership.third_party_material` |
@@ -20,6 +20,16 @@ Every chunk is one request that carries the whole [versioned question battery](.
 Each hazard is a Noul: the probability that the condition holds. The model never sees the policy. Code compares each probability with a review threshold (`0.35`) and an action threshold (`0.70`), maps a triggered hazard to `block`, `review` or `note`, lets a severity Score of `2.0` or more turn a `review` into a `block`, and reports the highest action per file. These numbers are starting points from the [guardrails cookbook](https://docs.typesafe.ai/cookbooks/llm_guardrails.md); evaluate them on cases you know and change them with `--review-threshold`, `--action-threshold` and `--severity-block`. Changing a threshold does not require new inference: rerun with the same `--output` and recorded answers are reused.
 
 Exact lookups stay in code, not in questions: files that are tracked although ignored, files that contain this checkout's or your home directory's absolute path, and whether the repository root has a license file.
+
+Reader fit is a separate [whole-file audience review](../examples/integrations/README.md#review-who-a-whole-file-is-written-for),
+used when it matters: four independent Nouls for internal/external humans and
+agents, not a single intended-reader choice. Internal means maintaining or
+developing the project; external means using, integrating or evaluating it.
+Several audiences, all four, or none may apply. Classification is not
+confidentiality or quality approval and adds no release gate. The privacy/exposure
+checks here remain chunk-based; do not infer a file's audience from excerpts or
+aggregate chunk answers. Whole-file review requires the complete text and reports
+request-limit failures rather than silently truncating it.
 
 ## Run it
 

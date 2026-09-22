@@ -71,8 +71,6 @@ REVIEW_THRESHOLD = 0.35
 ACTION_THRESHOLD = 0.70
 SEVERITY_BLOCK = 2.0
 SEVERITY = "severity.exposure"
-READER = "audience.intended_reader"
-INSIDERS = "insiders_only"
 HAZARD_ACTION = {
     "leak.secret": "block",
     "leak.local_path": "review",
@@ -114,12 +112,10 @@ def load_questions(path: Path = QUESTIONS) -> dict[str, Any]:
         raise ReviewError("The question battery could not be read.") from None
     # The policy below names every question. A renamed or added question must
     # get an explicit action here instead of silently never affecting a verdict.
-    if not isinstance(questions, dict) or set(questions) != {*HAZARD_ACTION, READER, SEVERITY}:
+    if not isinstance(questions, dict) or set(questions) != {*HAZARD_ACTION, SEVERITY}:
         raise ReviewError("The question battery does not match the policy in this example.")
     if any(questions[name].get("type") != "noul" for name in HAZARD_ACTION):
         raise ReviewError("Every hazard question must be a Noul.")
-    if questions[READER].get("type") != "choice" or INSIDERS not in questions[READER].get("criteria", {}):
-        raise ReviewError("The intended-reader question must be a Choice that offers insiders_only.")
     if questions[SEVERITY].get("type") != "score":
         raise ReviewError("The severity question must be a Score.")
     return questions
@@ -317,8 +313,6 @@ def decide(answers: Mapping[str, Any], policy: Mapping[str, float]) -> dict[str,
             triggered[hazard] = action
         elif probability >= policy["review_threshold"] and action != "note":
             triggered[hazard] = "review"
-    if answers[READER]["probabilities"][INSIDERS] >= policy["action_threshold"]:
-        triggered[READER] = "review"
     severity = answers[SEVERITY]["score"]
     if severity >= policy["severity_block"]:
         triggered = {name: "block" if action == "review" else action for name, action in triggered.items()}

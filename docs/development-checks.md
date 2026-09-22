@@ -66,6 +66,18 @@ as review signals, then verify the change with source inspection, regression
 tests, and shared conformance. Benchmark claims must identify the measured
 function; they do not describe whole-request latency.
 
+When reader fit matters, the optional [whole-file audience review](../examples/integrations/README.md#review-who-a-whole-file-is-written-for)
+reuses `system_one_check.py review` with
+[`file-audience.questions.json`](../examples/file-audience.questions.json) and
+state `{path, content}` containing one complete file. Four independent Nouls ask
+whether it is written for internal humans, external humans, internal agents or
+external agents. Internal means maintaining/developing this project; external
+means using/integrating/evaluating it. Multiple audiences, all four or none are
+valid; these are not confidentiality labels or quality approvals. Follow the
+linked public-source selection and ignored-output recipe. Do not truncate or
+combine excerpt judgments; a whole-file request that exceeds limits is a failure,
+not an audience answer. No new mandatory gate, receipt or header is required.
+
 ## Offline parity review
 
 [The review collector](../examples/parity_review.py) emits an ordinary request without sending HTTP or changing source files. After reviewing the selected public source for private data, collect a scoped request:

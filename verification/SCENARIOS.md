@@ -73,7 +73,7 @@ or sent, including a file tracked despite the ignore rules, which is reported
 unreviewed. Symbolic links are reported unreviewed rather than followed. Each
 chunk is one native request carrying the whole versioned question battery under
 the explicit `--model`; nothing is sent without `--confirm-send`. Code thresholds
-turn the Noul, Choice and Score answers into pass, note, review or block: a Noul
+turn the hazard Noul and severity Score answers into pass, note, review or block: a Noul
 at or above the action threshold triggers its hazard's action, one at or above
 the review threshold triggers review unless the hazard is note-only, severity at
 or above its threshold turns review into block, and severe exposure with no
@@ -85,6 +85,26 @@ within a run or across resumed runs. `.gitignore` does not filter published
 history, so a historical path that current ignore rules exclude is reported
 unreviewed, which makes the run exit `1` even without model findings, and its
 content is never sent.
+
+Whole-file audience review is separate from those chunk-based privacy/exposure
+checks. The existing review CLI receives `{path, content}` with the complete file
+and four independent Nouls: `audience.internal_humans`,
+`audience.external_humans`, `audience.internal_agents` and
+`audience.external_agents`. Internal means maintaining/developing this project;
+external means using/integrating/evaluating it, as a human or an AI agent.
+`audience.all-four-whole-file` exercises one request containing more than 6,000
+characters with relevant beginning and ending text, and preserves four high
+probabilities without normalization or exclusive selection. `audience.none`
+preserves four zero probabilities as a valid exchange. `audience.missing-answer`,
+`audience.invalid-answer` and `audience.request-too-large` cover missing answers,
+wrong answer types and an HTTP 413 failure, not guessed classifications. These
+synthetic CLI/SDK scenarios inspect actual wire bodies and saved evidence; they
+do not establish model accuracy. The separate
+[`file-audience.fixtures.json`](../examples/file-audience.fixtures.json) contains
+labeled whole-file controls for model-quality evaluation, not model outputs.
+Audience classification is neither confidentiality nor quality approval:
+`passed` records exchange validity, not reader suitability. No global audience
+may be inferred from truncated excerpts or aggregated chunk judgments.
 
 The Laya/Jev ensemble is SDK-side orchestration, not a gateway mode. Its versioned
 public synthetic state and questions go concurrently to explicit, distinct Laya
