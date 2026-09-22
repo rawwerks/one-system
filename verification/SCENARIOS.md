@@ -35,7 +35,8 @@ fail preflight before any source copy or scanner invocation.
 <!-- true-up:anchor id=examples -->
 Skill suggestions use native System One questions through the SDK, preserve the
 whole candidate roster, and apply the documented gate/verification thresholds.
-CLI consumers require an explicit `--model`; the registry's configured name selects
+CLI consumers require an explicit `--model`, or both `--laya-model` and
+`--jev-model` for the ensemble example. A registry's configured name selects
 automatic routing and a configured backend ID selects direct dispatch. Neither
 the One System project name nor a demo configuration supplies an implicit model.
 Malformed answers, redirects and HTTP failures are errors, never abstentions or
@@ -63,6 +64,21 @@ within a run or across resumed runs. `.gitignore` does not filter published
 history, so a historical path that current ignore rules exclude is reported
 unreviewed, which makes the run exit `1` even without model findings, and its
 content is never sent.
+
+The Laya/Jev ensemble is SDK-side orchestration, not a gateway mode. Its versioned
+public synthetic state and questions go concurrently to explicit, distinct Laya
+and Jev backend IDs. After both responses validate, Jev receives the original state
+and both expert models/typed answers. The adjudication questions preserve IDs,
+types, criteria and original instructions; expert judgments are fallible advice,
+not new facts or instructions. Jev answers the original questions, not which
+expert wins. Stdout contains one standard response with the versioned composite
+identity, exactly the adjudicator's answers, and summed usage from all three
+responses. Optional output uses a fresh directory and records stage bodies,
+timings and model identities, not headers or credentials. Initial-stage failures
+or malformed answers prevent adjudication; adjudicator failures also produce no
+final response. Errors exit 2 with empty stdout and sanitized diagnostics, without
+retries, fallback or partial success. Synthetic HTTP scenarios prove concurrency,
+stage ordering, answer preservation and failure behavior, not model quality.
 <!-- true-up:end id=examples -->
 
 ## Worker transport

@@ -130,6 +130,37 @@ Set `ONE_SYSTEM_CONFIG` in `.env`, reload it, restart the gateway, and use the c
 Or set a request's `model` to a backend ID such as `local` or `hosted` to bypass
 selection. A direct call does not silently substitute another backend.
 
+### Laya + Jev, then Jev adjudication
+
+[`examples/laya_jev_ensemble.py`](examples/laya_jev_ensemble.py) composes three native
+System One requests using the official async Python SDK. Laya and Jev answer the
+same questions concurrently; Jev then sees the original evidence and both typed
+judgments and answers those original questions again. The gateway stays unchanged.
+
+Start [local Laya](docs/local-laya.md) and a gateway configured with both `local`
+and `hosted` backends (`backends.json` or `examples/privacy.backends.json`).
+Then, from the repository root:
+
+```sh
+make setup-examples
+TYPESAFE_ENDPOINT=http://127.0.0.1:8090 TYPESAFE_API_KEY="$ONE_SYSTEM_API_KEY" \
+  .build/example-venv/bin/python examples/laya_jev_ensemble.py \
+  --laya-model local --jev-model hosted --output .build/ensemble-demo
+```
+
+Use the gateway's API key here, not the hosted TypeSafe key. Both model arguments
+are explicit backend IDs, bypassing automatic selection. The versioned
+[`laya-jev-ensemble.json`](examples/laya-jev-ensemble.json) contains only public
+synthetic input and the adjudication instructions. Two requests go to hosted Jev
+and may incur charges; this is a feasibility example, not evidence of better accuracy.
+
+Stdout is one standard `{model, answers, usage}` response: composite identity
+`laya-jev-ensemble-v1`, the adjudicator's answers, and summed usage from all three
+responses. Optional `--output` must name a new directory; it retains stage
+request/response bodies, timing/model provenance, and the final result, but no
+headers or credentials. Omit it to print only the final response. Failed or
+invalid stages stop the example without retries, fallback, or a partial answer.
+
 ## Build your own configuration
 
 Give your registry a `name`, list compatible HTTP backends, and choose your

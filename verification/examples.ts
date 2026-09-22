@@ -95,7 +95,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
   const cli = (name: string, args: string[], extra: { [key: string]: string } = {}): Promise<Run> => run([join(root, 'examples', name + '.py'), ...args], extra);
   const serializableRun = (result: Run): ObjectValue => ({ exit: result.exit, output: result.stdout.trim(), diagnostic: result.stderr.trim(), leaksRoot: result.stdout.includes(scratch) || result.stderr.includes(scratch), traceback: result.stderr.includes('Traceback') });
 
-  async function server<T>(handler: (body: ObjectValue, path: string) => Reply, use: (endpoint: string, calls: ObjectValue[]) => Promise<T>): Promise<T> {
+  async function server<T>(handler: (body: ObjectValue, path: string) => Reply | Promise<Reply>, use: (endpoint: string, calls: ObjectValue[]) => Promise<T>): Promise<T> {
     const calls: ObjectValue[] = [];
     const service = createServer(async (req: IncomingMessage, res) => {
       if (req.method === 'GET') {
@@ -107,9 +107,10 @@ export async function collectExamples(root: string): Promise<Record[]> {
       for await (const chunk of req) chunks.push(chunk);
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString());
-        calls.push({ path: req.url, body, authorized: req.headers.authorization === 'Bearer public-loopback-fixture' });
-        const reply = handler(body, req.url || '');
-        calls[calls.length - 1].response = { status: reply.status || 200, body: clone(reply.body) };
+        const call: ObjectValue = { path: req.url, body, authorized: req.headers.authorization === 'Bearer public-loopback-fixture' };
+        calls.push(call);
+        const reply = await handler(body, req.url || '');
+        call.response = { status: reply.status || 200, body: clone(reply.body) };
         res.statusCode = reply.status || 200;
         res.setHeader('content-type', 'application/json');
         if (res.statusCode === 307) res.setHeader('location', '/redirect-trap');
@@ -263,8 +264,79 @@ export async function collectExamples(root: string): Promise<Record[]> {
 
   await evidenceScenarios();
   await releaseScenarios();
+  await ensembleScenarios();
   save(join(scratch, 'observations.json'), records);
   return records;
+
+  async function ensembleScenarios(): Promise<void> {
+    const fixture = read(join(root, 'examples/laya-jev-ensemble.json'));
+    const contract = 'This public synthetic example calls explicit Laya and Jev backend IDs concurrently with identical original state/questions, waits for both valid answers, then calls Jev once to adjudicate. The adjudicator receives original_state plus both expert models/answers; every question retains its ID, type and criteria, with its original instructions nested alongside the versioned adjudication task. It answers the original questions, not which expert wins. A success prints one standard response with the composite identity, exactly the adjudicator answers and all three token usages summed. The optional fresh directory retains stage bodies and a report. Any failed or invalid stage exits 2 with empty stdout and a sanitized diagnostic, never retries, never falls back, and creates no final response; failure in either initial stage prevents adjudication. These synthetic answers exercise orchestration, not model quality.';
+    function response(model: string, choice: string, level: number, noul: number, tokens: number): ObjectValue {
+      return { model, answers: {
+        department: { type: 'choice', choice, confidence: 1, probabilities: Object.fromEntries(Object.keys(fixture.questions.department.criteria).map(key => [key, Number(key === choice)])) },
+        refund_requested: { type: 'noul', noul },
+        urgency: { type: 'score', score: level, confidence: 1, legend: Object.fromEntries(fixture.questions.urgency.criteria.map((value: string, index: number) => [String(index), value])), probabilities: { '0': Number(level === 0), '1': Number(level === 1), '2': Number(level === 2) } },
+      }, usage: { input_tokens: tokens * 10, output_tokens: tokens } };
+    }
+    const responses = {
+      laya: response('laya-synthetic', 'technical', 0, 0.1, 1),
+      jev: response('jev-synthetic', 'billing', 1, 0.6, 2),
+      adjudication: response('jev-synthetic', 'account', 2, 0.9, 3),
+    };
+    for (const variant of ['success', 'leaf-error', 'leaf-invalid', 'adjudicator-error']) {
+      const directory = join(scratch, `ensemble-${variant}`);
+      const events: string[] = [];
+      let release: () => void = () => {};
+      const bothArrived = new Promise<void>(resolve => { release = resolve; });
+      let initialRequests = 0;
+      await server(async body => {
+        const stage = typeof body.state === 'object' && body.state?.original_state !== undefined
+          ? 'adjudication' : body.model === 'laya-fixture' ? 'laya' : 'jev';
+        events.push(`${stage}:received`);
+        if (stage !== 'adjudication') {
+          if (++initialRequests === 2) release();
+          // A sequential implementation cannot complete any ensemble scenario.
+          await bothArrived;
+        }
+        const answer = clone(responses[stage]);
+        if (variant === 'leaf-invalid' && stage === 'laya') delete answer.answers.refund_requested;
+        const failed = (variant === 'leaf-error' && stage === 'laya') || (variant === 'adjudicator-error' && stage === 'adjudication');
+        events.push(`${stage}:response`);
+        return failed ? { status: 503, body: { error: { message: 'PRIVATE_ENSEMBLE_CANARY' } } } : { body: answer };
+      }, async (endpoint, calls) => {
+        const actual = await cli('laya_jev_ensemble', ['--laya-model', 'laya-fixture', '--jev-model', 'jev-fixture', '--output', directory], { TYPESAFE_ENDPOINT: endpoint, TYPESAFE_API_KEY: 'public-loopback-fixture' });
+        const report = existsSync(join(directory, 'report.json')) ? read(join(directory, 'report.json')) : null;
+        const finalPath = join(directory, 'final.response.json');
+        const final = existsSync(finalPath) ? read(finalPath) : null;
+        const initial = calls.filter(call => typeof call.body.state === 'string');
+        const adjudication = calls.find(call => typeof call.body.state === 'object');
+        const expectedQuestions = Object.fromEntries(Object.entries(fixture.questions).map(([name, question]) => {
+          const value = question as ObjectValue;
+          return [name, { ...value, instructions: { original_question: value.instructions, task: fixture.adjudication_instructions } }];
+        }));
+        const expectedState = { original_state: fixture.state, expert_judgments: Object.fromEntries(['laya', 'jev'].map(stage => {
+          const value = responses[stage as 'laya' | 'jev'];
+          return [stage, { model: value.model, answers: value.answers }];
+        })) };
+        const initialValid = initial.length === 2 && same(initial.map(call => call.body.model).sort(), ['jev-fixture', 'laya-fixture'])
+          && initial.every(call => same(call.body.state, fixture.state) && same(call.body.questions, fixture.questions));
+        const adjudicationValid = adjudication?.body.model === 'jev-fixture' && same(adjudication.body.state, expectedState) && same(adjudication.body.questions, expectedQuestions)
+          && ['laya', 'jev'].every(stage => events.indexOf('adjudication:received') > events.indexOf(`${stage}:response`));
+        const common = initialValid && calls.every(call => call.authorized && call.path === '/v1/systemone')
+          && ['laya', 'jev'].every(stage => events.indexOf(`${stage}:response`) > Math.max(events.indexOf('laya:received'), events.indexOf('jev:received')))
+          && !actual.stderr.includes('PRIVATE_ENSEMBLE_CANARY') && !actual.stderr.includes('Traceback');
+        const successful = variant === 'success';
+        const expectedCalls = variant.startsWith('leaf-') ? 2 : 3;
+        const expectedFinal = { model: fixture.model, answers: responses.adjudication.answers, usage: { input_tokens: 60, output_tokens: 6 } };
+        const valid = successful
+          ? actual.exit === 0 && same(JSON.parse(actual.stdout || 'null'), expectedFinal) && same(final, expectedFinal)
+            && report?.status === 'completed' && adjudicationValid
+          : actual.exit === 2 && actual.stdout === '' && actual.stderr.trim() !== '' && final === null && report?.status === 'incomplete'
+            && (variant.startsWith('leaf-') ? !adjudication : adjudicationValid);
+        record(`ensemble.${variant}`, contract, { input: fixture, variant, responseHold: 'The HTTP fixture withholds both initial responses until both requests arrive.', events, calls, outcome: serializableRun(actual), report, final }, common && calls.length === expectedCalls && valid);
+      });
+    }
+  }
 
   async function evidenceScenarios(): Promise<void> {
     const contract = 'Model admission requires current rubric/candidate review plus complete matching native/gateway evidence. Missing evidence is not readiness; violations reject, uncertainty holds. Recompute wire integrity, typed-answer semantics, exact usage and bounded numeric parity even when stored hashes match. Local gate never performs inference.';
