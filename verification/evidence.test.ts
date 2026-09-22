@@ -163,6 +163,20 @@ test('private graph targets, traversal, symlinks and missing spans cannot be exp
   } finally { work.close(); }
 });
 
+test('large aggregate evidence keeps explicit byte bounds and source-file safety', () => {
+  const work = workspace();
+  try {
+    const payload = 'x'.repeat(2 * 1024 * 1024 + 1);
+    work.put('examples.json', payload);
+    assert.throws(() => read(work.dir, 'examples.json'), /unsafe_source_file/);
+    assert.equal(read(work.dir, 'examples.json', payload.length), payload);
+    assert.throws(() => read(work.dir, 'examples.json', payload.length - 1), /unsafe_source_file/);
+    assert.throws(() => read(work.dir, 'examples.json', Infinity), /invalid_source_limit/);
+    symlinkSync(join(work.dir, 'examples.json'), join(work.dir, 'alias.json'));
+    assert.throws(() => read(work.dir, 'alias.json', payload.length), /unsafe_source_file/);
+  } finally { work.close(); }
+});
+
 test('contract facts are identified exactly once and hashed independent of object key order', () => {
   const work = workspace();
   try {

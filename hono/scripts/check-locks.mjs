@@ -82,7 +82,9 @@ export function checkLocks(manifest, npm, bun) {
 }
 
 if (import.meta.main) {
-  const root = fileURLToPath(new URL('..', import.meta.url));
+  const directory = process.argv[2];
+  const root = directory ? resolve(directory) : fileURLToPath(new URL('..', import.meta.url));
+  const label = directory ?? 'Hono';
   try {
     const read = name => JSON.parse(readFileSync(resolve(root, name), 'utf8'));
     if (existsSync(resolve(root, 'bun.lockb'))) {
@@ -91,9 +93,9 @@ if (import.meta.main) {
     const bunPath = resolve(root, 'bun.lock');
     const bun = existsSync(bunPath) ? Bun.JSONC.parse(readFileSync(bunPath, 'utf8')) : undefined;
     checkLocks(read('package.json'), read('package-lock.json'), bun);
-    console.log('Hono lockfiles agree; package-lock.json is authoritative.');
+    console.log(`${label} lockfiles agree; package-lock.json is authoritative.`);
   } catch (error) {
-    console.error(`Hono setup stopped: ${error.message}`);
+    console.error(`${label} setup stopped: ${error.message}`);
     console.error('Preserve any local bun.lock you need, then regenerate that ignored file from the reviewed npm lock before retrying.');
     process.exitCode = 1;
   }

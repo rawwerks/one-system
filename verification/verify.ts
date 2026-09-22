@@ -7,7 +7,7 @@ import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { completion, current, hash, loadObligations, observations, read, selfObservations, snapshot } from './evidence.ts';
-import { batches, collect, coreGroups, requireObligations, scenarioStatus, scenarioQuestions, semanticRows, type Scenario } from './scenarios.ts';
+import { collect, coreGroups, requireObligations, scenarioStatus, scenarioQuestions, semanticRows, type Scenario } from './scenarios.ts';
 import { compose, evaluate } from './semantic.ts';
 import type { Json } from './semantic.ts';
 
@@ -127,7 +127,8 @@ try {
     save('self-observations.json', self);
     const scenarioEvidence: Record<string, Scenario[]> = {};
     for (const group of coreGroups) {
-      const envelope = JSON.parse(read(scenarioDirectory, `${group}.json`));
+      // This is a local aggregate, not one exported source or HTTP response.
+      const envelope = JSON.parse(read(scenarioDirectory, `${group}.json`, 16 * 1024 * 1024));
       if (envelope.version !== 1 || envelope.group !== group || scenarioStatus(envelope.rows) !== 'passed') throw new Error('invalid_scenario_evidence');
       scenarioEvidence[group] = envelope.rows;
     }
@@ -140,7 +141,7 @@ try {
     }
     const jobs = obligations.flatMap(obligation => {
       const kind = obligation.spec.evidence; // ubs:ignore — public evidence category, not a secret.
-      const inputs = kind === 'capabilities' ? [observed] : kind === 'self' ? [self] : batches(semanticRows(scenarioEvidence[kind])); // ubs:ignore — public evidence category comparisons.
+      const inputs = kind === 'capabilities' ? [observed] : kind === 'self' ? [self] : semanticRows(scenarioEvidence[kind]).map(row => [row]); // ubs:ignore — public evidence category comparisons.
       return inputs.map((rows, i) => ({ ...obligation, rows, id: inputs.length === 1 ? obligation.spec.id : `${obligation.spec.id}.${i + 1}`,
         questions: kind === 'capabilities' || kind === 'self' ? obligation.spec.questions : scenarioQuestions(obligation.spec.questions, rows),
         available: !scenarioEvidence[kind] || scenarioStatus(scenarioEvidence[kind]) === 'passed' }));
@@ -150,7 +151,7 @@ try {
     if (!nativeOnly && process.env.TYPESAFE_API_KEY) {
       const gateway = await reviewGateway();
       try {
-        await Promise.all(jobs.map(async (obligation, index) => {
+        const review = async (obligation: typeof jobs[number], index: number) => {
           if (!obligation.available) { report.obligations[index].reason = 'scenario_evidence_incomplete'; return; }
           const state = { ...obligation.state, observations: obligation.rows } as Json;
           const directory = obligation.id;
@@ -171,6 +172,13 @@ try {
           } catch {
             report.obligations[index] = { id: obligation.id, cases: obligation.rows.length, ...receipt, status: 'unresolved', error: 'semantic_evaluation_failed',
               next: 'Inspect the scoped input and gateway log; verify service availability and the expected native model.' };
+          }
+        };
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(8, jobs.length) }, async () => {
+          while (next < jobs.length) {
+            const index = next++;
+            await review(jobs[index], index);
           }
         }));
       } finally { await gateway.stop(); }

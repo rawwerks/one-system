@@ -84,6 +84,18 @@ def main():
               'Run make setup-examples, or select an existing EXAMPLE_VENV. Honor package-age restrictions.')
 
     if args.profile == 'all':
+        try:
+            manifest = json.loads((ROOT / 'verification/package.json').read_text())
+            lock = json.loads((ROOT / 'verification/package-lock.json').read_text())
+            expected = lock['packages']['node_modules/@typesafe-ai/sdk']['version']
+            actual = json.loads((ROOT / 'verification/node_modules/@typesafe-ai/sdk/package.json').read_text())['version']
+            ready = (isinstance(expected, str) and bool(expected)
+                     and actual == expected == manifest['dependencies']['@typesafe-ai/sdk']
+                     == lock['packages']['']['dependencies']['@typesafe-ai/sdk'])
+        except (OSError, ValueError, KeyError, TypeError):
+            ready = False
+        check('Isolated JavaScript verifier SDK matches its manifest and lock', ready,
+              'Run make setup-verification. Honor package-age restrictions; gateways do not need this SDK.')
         check('Gitleaks secret scanner', shutil.which('gitleaks') is not None,
               'Install Gitleaks before committing; see CONTRIBUTING.md.')
         check('true-up 0.2.1 dependency checker', probe(['true-up', '--version']) == 'true-up 0.2.1',

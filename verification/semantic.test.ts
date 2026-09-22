@@ -121,7 +121,12 @@ test('transport and parse errors never return response bodies or credentials; no
     let calls = 0;
     const gateway = await server((_req, res) => { calls++; respond(res); });
     try {
-      await assert.rejects(evaluate(options(gateway.endpoint)), { message: diagnostic });
+      await assert.rejects(evaluate(options(gateway.endpoint)), (error: Error & { cause?: unknown }) => {
+        assert.equal(error.message, diagnostic);
+        assert.equal(error.cause, undefined, 'SDK errors must not escape with response bodies or transport causes');
+        assert.equal(JSON.stringify(error).includes(testToken), false);
+        return true;
+      });
       assert.equal(calls, 1);
     } finally { await gateway.close(); }
   })));
@@ -196,5 +201,29 @@ test('invalid inputs are rejected before network access', async () => {
     await assert.rejects(evaluate({ ...options(gateway.endpoint), questions: {} }), { message: 'invalid_request' });
     await assert.rejects(evaluate({ ...options(gateway.endpoint), apiKey: `${testToken}\n` }), { message: 'invalid_request' });
     assert.equal(calls, 0);
+  } finally { await gateway.close(); }
+});
+
+test('concurrent evaluations keep evidence and persistence failures isolated', async () => {
+  const requests: unknown[] = [];
+  const gateway = await server(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    requests.push(JSON.parse(body).state);
+    res.end(JSON.stringify(response()));
+  });
+  try {
+    const evidence: WireEvidence[] = [];
+    const accepted = { ...options(gateway.endpoint), state: { trace: 'accepted' }, onWire: (wire: WireEvidence) => { evidence.push(wire); } };
+    const good = evaluate(accepted);
+    accepted.state.trace = 'mutated after submission';
+    const rejected = evaluate({ ...options(gateway.endpoint), state: { trace: 'rejected' }, onWire: () => { throw new Error(testToken); } });
+    const [result] = await Promise.all([good, assert.rejects(rejected, { message: 'evidence_write_failed' })]);
+    assert.deepEqual(requests, [{ trace: 'accepted' }]);
+    assert.deepEqual(result.request.state, { trace: 'accepted' });
+    assert.deepEqual(evidence, [
+      { requestBody: result.requestBody },
+      { requestBody: result.requestBody, responseBody: result.responseBody, responseStatus: 200 },
+    ]);
   } finally { await gateway.close(); }
 });

@@ -11,12 +11,13 @@ function stable(value: any): any {
   return Array.isArray(value) ? value.map(stable) : value !== null && typeof value === 'object'
     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
 }
-export function read(root: string, path: string): string {
+export function read(root: string, path: string, maxBytes = 2 * 1024 * 1024): string {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('invalid_source_limit');
   if (!path || path.startsWith('/') || path.split('/').some(p => !p || p === '.' || p === '..')) throw new Error('unsafe_source_path');
   const parts = path.split('/');
   for (let i = 1; i <= parts.length; i++) {
     const info = lstatSync(join(root, ...parts.slice(0, i)));
-    if (info.isSymbolicLink() || (i === parts.length && (!info.isFile() || info.size > 2 * 1024 * 1024))) throw new Error('unsafe_source_file');
+    if (info.isSymbolicLink() || (i === parts.length && (!info.isFile() || info.size > maxBytes))) throw new Error('unsafe_source_file');
   }
   return readFileSync(join(root, path), 'utf8');
 }

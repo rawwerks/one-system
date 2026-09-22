@@ -66,13 +66,18 @@ export async function collectExamples(root: string): Promise<Record[]> {
       return `${file}.py:${begin + 1}\n${lines.slice(begin, end).map(line => line.replace(/\s+# ubs:ignore.*$/, '')).join('\n').trim()}`;
     }).join('\n\n');
   };
-  // Describe only the synthetic filesystem we created, without following links.
+  // Describe authored fixture payloads without following links or exporting Git internals.
   const fixturePath = (path: string): ObjectValue => {
     if (!path.startsWith(scratch + '/')) return { kind: 'unbound', supplied: path };
     if (!existsSync(path)) return { kind: 'missing', path };
     const stat = lstatSync(path);
     if (stat.isSymbolicLink()) return { kind: 'symlink', path, target: readlinkSync(path) };
-    if (stat.isDirectory()) return { kind: 'directory', path, entries: Object.fromEntries(readdirSync(path).sort().map(name => [name, fixturePath(join(path, name))])) };
+    if (stat.isDirectory()) {
+      const names = readdirSync(path).sort();
+      return { kind: 'directory', path,
+        ...(names.includes('.git') ? { omittedEntries: ['.git'], omissionReason: 'Git administrative metadata is not fixture payload.' } : {}),
+        entries: Object.fromEntries(names.filter(name => name !== '.git').map(name => [name, fixturePath(join(path, name))])) };
+    }
     return { kind: 'file', path, bytes: stat.size, ...(stat.size <= 8192 ? { content: readFileSync(path, 'utf8') } : { prefix: readFileSync(path, 'utf8').slice(0, 80), contentOmitted: true }) };
   };
   const env = { PATH: process.env.PATH || '', HOME: scratch, TMPDIR: scratch, PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1', PYTHONPATH: join(root, 'examples') };
@@ -124,25 +129,64 @@ export async function collectExamples(root: string): Promise<Record[]> {
     finally { service.closeAllConnections(); await new Promise<void>(resolve => service.close(() => resolve())); }
   }
 
-  const skillContract = 'Skill suggestion uses the complete roster, ranks and verifies via native System One; mean(acts, procedure, 1-prose) >= .30 permits verification, max(fits) >= .30 returns the SECOND Choice winner. Errors never become abstentions. No retries or redirects. Private corpus transmission requires explicit permission; corpus roots and raw failures stay private.';
-  const skillPolicy = excerpt('skill_suggestion', ['_answers', '_choice', '_noul', 'suggest']);
-  async function skill(id: string, replies: Reply[], expected: string, exit = 0, extra: { [key: string]: string } = {}, args = [request], check?: (calls: ObjectValue[]) => boolean): Promise<ObjectValue[]> {
+  const rankContract = 'For a valid roster and valid synthetic answers, the skill CLI sends every roster entry with its entire description field in the first Choice, not description_full. Code computes mean(acts_on_user_system, would_follow_documented_procedure, 1-prose_suffices); below 0.30 it abstains after one request, otherwise it verifies up to three existing entries ordered by descending first-Choice probability then skill ID. Verification preserves state and supplies each description_full followed by at most the first 700 normalized body Unicode codepoints (the whole body if shorter). At or above 0.30 maximum shortlist fit, stdout is the second Choice winner; otherwise stdout is no suggestion. Both successful outcomes exit zero. Requests use the explicit model and authenticated native System One endpoint, without retries or redirects; private content requires explicit permission and corpus roots remain redacted. This checks composition of the supplied answers, not whether the synthetic answers accurately assess the user request.';
+  const fitContract = 'The second-stage Choice selects the suggested ID; independent per-candidate Nouls decide whether the shortlist contains any fit. With valid answers and the first-stage gate satisfied, max(shortlist fits) >= 0.30 returns the second Choice winner, not the maximum-fit candidate; the winner need not itself have fit >= 0.30. If every fit is below 0.30, the CLI abstains. This is the documented cookbook composition, not a claim that synthetic answers establish skill quality.';
+  const answerContract = 'The skill CLI must validate received model responses against the requested answer IDs, requested Choice candidates and finite in-range probabilities. The supplied model response may be invalid. On missing, extra, malformed or inconsistent answers, the CLI must stop with a sanitized diagnostic on stderr, empty stdout, and exit 2. It must not produce an ID or a successful no-suggestion abstention, and must not trigger a retry or further inference stage.';
+  const transportContract = 'A non-success HTTP response in either skill stage must stop the CLI with empty stdout, exit 2 and a sanitized diagnostic, never a successful no-suggestion abstention. It must not retry the failed request, follow a redirect, or run a later stage after failure. Private paths, raw upstream error bodies, credentials and tracebacks must stay out of CLI output.';
+  const configurationContract = 'The skill CLI requires a nonempty gateway API key and an HTTP(S) origin with no userinfo, path beyond /, query or fragment. Invalid configuration must stop before inference, with empty stdout, exit 2 and a sanitized configuration diagnostic rather than no suggestion. It must not fall back to default credentials/endpoints or expose private input or a traceback.';
+  const singletonContract = 'An explicitly authorized private roster with one valid skill still uses both native System One stages when the first gate mean reaches 0.30. Each Choice contains that one portable ID; verification enriches it from its metadata and adds its fit Noul. The shortlist has min(3, roster size) entries, not three invented entries. When maximum fit reaches 0.30, the CLI returns the second Choice winner with exit 0. The explicit model, no-retry policy and private-root redaction still apply; this tests application composition, not the synthetic skill’s usefulness.';
+  const relocationContract = 'With --allow-private, the skill CLI may send the bound private corpus content, but must replace its absolute and encoded root spellings in the user request and skill text with ${SKILLS_LIBRARY_PATH}. Replacement precedes taking at most 700 normalized body Unicode codepoints. Portable IDs come from metadata, not folder names. A one-entry roster still runs rank then verify when the gate reaches 0.30 and returns the second Choice winner when its fit reaches 0.30; both native requests use the explicit model without retries. This invocation tests redaction and composition, not live answer quality or a comparison to another run.';
+  const skillSource = readFileSync(join(root, 'examples/skill_suggestion.py'), 'utf8');
+  const skillPolicy = skillSource.slice(skillSource.indexOf('SHORTLIST ='), skillSource.indexOf('class SuggestionError'))
+    + excerpt('skill_suggestion', ['_text', '_probability', '_answers', '_choice', '_noul', 'suggest', 'main']);
+  const skillProvenance = read(join(root, 'examples/skills/provenance.json'));
+  const privateFixtureRecords = new Map<string, ObjectValue[]>();
+  async function skill(id: string, replies: Reply[], expected: string, exit = 0, extra: { [key: string]: string } = {}, args = [request], check?: (calls: ObjectValue[]) => boolean, contract = rankContract): Promise<ObjectValue[]> {
     const supplied = replies.map(reply => ({ status: reply.status || 200, answers: reply.body.answers || null }));
     const argv = ['--model', 'routing-demo', ...args];
     return server(() => replies.shift() || { status: 500, body: {} }, async (endpoint, calls) => {
       const count = replies.length;
       const result = await cli('skill_suggestion', argv, { TYPESAFE_ENDPOINT: endpoint, TYPESAFE_API_KEY: 'public-loopback-fixture', ...extra });
-      const wire = calls.map(c => ({ path: c.path, model: c.body.model, state: c.body.state, questions: Object.keys(c.body.questions), candidates: Object.keys(c.body.questions.which.criteria) }));
+      const wire = calls.map(c => ({ path: c.path, authorized: c.authorized, request: c.body, response: c.response }));
       const safe = ![scratch, 'PRIVATE_CANARY', 'public-loopback-fixture', 'Traceback'].some(secret => (result.stdout + result.stderr).includes(secret));
       const native = calls.every(c => c.path === '/v1/systemone' && c.authorized && c.body.model === 'routing-demo');
-      const gates = supplied[0]?.answers;
+      const gates = calls[0]?.response?.body?.answers;
       const operands: unknown[] | null = gates ? [gates['gate::acts_on_user_system']?.noul ?? null, gates['gate::would_follow_documented_procedure']?.noul ?? null, typeof gates['gate::prose_suffices']?.noul === 'number' ? 1 - gates['gate::prose_suffices'].noul : null] : null;
-      const fits = Object.entries(supplied[1]?.answers || {}).filter(([key]) => key.startsWith('fits::')).map(([key, value]) => ({ skill: key.slice(6), noul: (value as ObjectValue).noul }));
-      const stages = calls.map((call, index) => ({ requestedAnswerIDs: Object.keys(call.body.questions), receivedAnswerIDs: Object.keys(supplied[index]?.answers || {}), requestedCriteria: Object.keys(call.body.questions.which.criteria), receivedChoice: supplied[index]?.answers?.which?.choice || null }));
-      const input = { argv, environmentOverrides: extra, defaultEndpoint: '<loopback-server>', defaultKey: '<public-fixture-key>', corpus: extra.SKILLS_LIBRARY_PATH ? fixturePath(extra.SKILLS_LIBRARY_PATH) : publicRoster };
+      const gateMean = operands?.every((v): v is number => typeof v === 'number' && Number.isFinite(v)) ? operands.reduce((a, b) => a + b, 0) / 3 : null;
+      const fits = Object.entries(calls[1]?.response?.body?.answers || {}).filter(([key]) => key.startsWith('fits::')).map(([key, value]) => ({ skill: key.slice(6), noul: (value as ObjectValue).noul }));
+      const maximumFit = fits.length && fits.every(f => typeof f.noul === 'number' && Number.isFinite(f.noul)) ? Math.max(...fits.map(f => f.noul)) : null;
+      const probabilities = gates?.which?.probabilities;
+      const ranked = probabilities && Object.values(probabilities).every(v => typeof v === 'number' && Number.isFinite(v))
+        ? Object.entries(probabilities).map(([id, probability]) => ({ id, probability: probability as number })).sort((a, b) => b.probability - a.probability || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) : null;
+      const stages = calls.map(call => ({ requestedAnswerIDs: Object.keys(call.body.questions), receivedAnswerIDs: Object.keys(call.response?.body?.answers || {}), requestedCriteria: Object.keys(call.body.questions.which.criteria), receivedChoice: call.response?.body?.answers?.which?.choice || null }));
+      const input = { argv, environmentOverrides: extra, defaultEndpoint: '<loopback-server>', defaultKey: '<public-fixture-key>', corpus: extra.SKILLS_LIBRARY_PATH ? fixturePath(extra.SKILLS_LIBRARY_PATH) : publicRoster, corpusIsPrivate: !!extra.SKILLS_LIBRARY_PATH, privateTransmissionAuthorized: args.includes('--allow-private') };
       const cliInterface = id === 'unknown-argument-private' ? { help: serializableRun(await cli('skill_suggestion', ['--help'])), implementationExcerpt: excerpt('skill_suggestion', ['_ArgumentParser', 'main']) } : null;
-      record(`skill.${id}`, skillContract, { input, ...(cliInterface ? { cliInterface } : {}), implementationExcerpt: skillPolicy, result: serializableRun(result), suppliedResponses: supplied, inferenceCalls: calls.length, requests: wire, stages,
-        arithmeticFromResponses: { gateOperands: operands, gateMean: operands?.every((v): v is number => typeof v === 'number') ? operands.reduce((a, b) => a + b, 0) / 3 : null, fitValues: fits, maximumFit: fits.length ? Math.max(...fits.map(f => f.noul)) : null } }, result.exit === exit && result.stdout === expected && calls.length === count && safe && native && (exit !== 0 || result.stderr === '') && (!check || check(calls)));
+      const fixtureRecords = extra.SKILLS_LIBRARY_PATH ? privateFixtureRecords.get(extra.SKILLS_LIBRARY_PATH) ?? [] : publicRoster;
+      // These roots are the two spellings deliberately written by this fixture,
+      // not a replacement implementation of the application's general redactor.
+      const fixtureText = (text: string): string => {
+        const normalized = text.replace(/\r\n?/g, '\n').trim();
+        return extra.SKILLS_LIBRARY_PATH ? normalized.split(extra.SKILLS_LIBRARY_PATH).join('${SKILLS_LIBRARY_PATH}').split(encodeURIComponent(extra.SKILLS_LIBRARY_PATH)).join('${SKILLS_LIBRARY_PATH}') : normalized;
+      };
+      const composition = calls.length ? {
+        rankedFromFirstResponse: ranked, shortlistFromFirstResponseIfGatePermits: ranked?.slice(0, 3).map(entry => entry.id) ?? null,
+        actualVerificationCandidates: calls[1] ? Object.keys(calls[1].body.questions.which.criteria) : null,
+        sameStateAcrossStages: calls.length === 2 ? same(calls[0].body.state, calls[1].body.state) : null,
+        corpusTextComparison: fixtureRecords.map(entry => {
+          const body = [...fixtureText(entry.body)], description = fixtureText(entry.description), fullDescription = fixtureText(entry.description_full);
+          const prefix = `${fullDescription} — `, actualCriterion = calls[1]?.body.questions.which.criteria[entry.id] ?? null;
+          const actualBody = typeof actualCriterion === 'string' && actualCriterion.startsWith(prefix) ? actualCriterion.slice(prefix.length) : null;
+          return {
+            id: entry.id, descriptionFieldAfterNormalizationAndRedaction: description, actualRankCriterion: calls[0].body.questions.which.criteria[entry.id] ?? null,
+            normalizedRedactedBodyCodepoints: body.length, referenceExcerptCodepoints: Math.min(700, body.length),
+            verificationCriterionIfShortlisted: `${prefix}${body.slice(0, 700).join('')}`,
+            actuallyShortlisted: !!calls[1] && entry.id in calls[1].body.questions.which.criteria,
+            actualVerificationCriterion: actualCriterion, actualBodyExcerptCodepoints: actualBody === null ? null : [...actualBody].length,
+          };
+        }),
+      } : null;
+      record(`skill.${id}`, contract, { scope: 'Actual skill CLI and official SDK against synthetic HTTP replies; this exercises application composition, not live model accuracy.', input, ...(cliInterface ? { cliInterface } : {}), documentedPolicy: skillProvenance, provenanceScope: 'The provenance describes the bundled public demonstration and algorithm. The corpus in input, not its four-record demonstration metadata, is the corpus used by this invocation.', implementationExcerpt: skillPolicy, ...(id.startsWith('configuration-') ? { configurationImplementation: excerpt('skill_suggestion', ['make_client']) } : {}), ...(extra.SKILLS_LIBRARY_PATH ? { privateCorpusImplementation: excerpt('skill_suggestion', ['_root_redactor', '_parse_skill', 'load_roster']) } : {}), result: serializableRun(result), suppliedResponses: supplied, inferenceCalls: calls.length, requests: wire, stages, composition,
+        arithmeticFromResponses: { gateOperands: operands, gateMean, gateThresholdInclusive: .30, gateMeetsThreshold: gateMean === null ? null : gateMean >= .30, fitValues: fits, maximumFit, fitThresholdInclusive: .30, maximumFitMeetsThreshold: maximumFit === null ? null : maximumFit >= .30 } }, result.exit === exit && result.stdout === expected && calls.length === count && safe && native && (exit !== 0 || result.stderr === '') && (!check || check(calls)));
       return calls;
     });
   }
@@ -154,13 +198,13 @@ export async function collectExamples(root: string): Promise<Record[]> {
       const entry = publicRoster.find(entry => entry.id === id)!;
       return second.questions.which.criteria[id] === `${entry.description_full} — ${[...entry.body.trim()].slice(0, 700).join('')}`;
     });
-  });
+  }, rankContract);
   for (const [id, a, p, prose, second, output] of [
     ['gate-below', .449, .45, 1, false, 'no suggestion\n'], ['gate-at', .45, .45, 1, true, 'slides-author\n'],
     ['gate-inverts-prose', .6, 0, 1, false, 'no suggestion\n'],
   ] as const) await skill(id, replies(rank(a, p, prose), ...(second ? [finalChoice()] : [])), output);
-  await skill('fit-below', replies(rank(), finalChoice([.299, .1, .2])), 'no suggestion\n');
-  await skill('fit-at-disagrees-with-choice', replies(rank(), finalChoice([.01, .30, .2])), 'slides-author\n');
+  await skill('fit-below', replies(rank(), finalChoice([.299, .1, .2])), 'no suggestion\n', 0, {}, [request], undefined, fitContract);
+  await skill('fit-at-disagrees-with-choice', replies(rank(), finalChoice([.01, .30, .2])), 'slides-author\n', 0, {}, [request], undefined, fitContract);
   const tied = [...ids].sort().slice(0, 3);
   await skill('stable-tie-order', replies(rank(.8, .8, .1, Object.fromEntries([...ids].reverse().map(id => [id, .25]))), finalChoice([.8, .2, .1], tied)), 'slides-author\n', 0, {}, [request], calls => same(Object.keys(calls[1].body.questions.which.criteria), tied));
   const invalid: [string, (value: ObjectValue) => void][] = [
@@ -170,14 +214,14 @@ export async function collectExamples(root: string): Promise<Record[]> {
     ['noul-out-of-range', v => { v.answers['gate::acts_on_user_system'].noul = 1.1; }], ['missing-noul', v => { delete v.answers['gate::acts_on_user_system'].noul; }],
     ['choice-not-maximum', v => { v.answers.which.choice = 'tables-audit'; }], ['zero-distribution', v => { v.answers.which.probabilities = Object.fromEntries(ids.map(id => [id, 0])); }],
   ];
-  for (const [id, corrupt] of invalid) { const value = rank(); corrupt(value); await skill(id, replies(value), '', 2); }
+  for (const [id, corrupt] of invalid) { const value = rank(); corrupt(value); await skill(id, replies(value), '', 2, {}, [request], undefined, answerContract); }
   const missingFit = finalChoice(); delete missingFit.answers['fits::notes-organize'];
   const unknownFinal = finalChoice(); unknownFinal.answers.which.choice = 'tables-audit';
-  for (const [id, body] of [['missing-fit', missingFit], ['unknown-final-choice', unknownFinal]] as const) await skill(id, replies(rank(), body), '', 2);
+  for (const [id, body] of [['missing-fit', missingFit], ['unknown-final-choice', unknownFinal]] as const) await skill(id, replies(rank(), body), '', 2, {}, [request], undefined, answerContract);
   const failure = { status: 503, body: { detail: [{ msg: `PRIVATE_CANARY ${scratch}` }] } };
-  await skill('first-stage-no-retry', [failure], '', 2);
-  await skill('second-stage-no-retry', [{ body: rank() }, failure], '', 2);
-  await skill('redirect-not-followed', [{ status: 307, body: { detail: [] } }], '', 2);
+  await skill('first-stage-no-retry', [failure], '', 2, {}, [request], undefined, transportContract);
+  await skill('second-stage-no-retry', [{ body: rank() }, failure], '', 2, {}, [request], undefined, transportContract);
+  await skill('redirect-not-followed', [{ status: 307, body: { detail: [] } }], '', 2, {}, [request], undefined, transportContract);
   const configurations: { [id: string]: { [name: string]: string } } = {
     'missing-key': { TYPESAFE_API_KEY: '' }, 'missing-endpoint': { TYPESAFE_ENDPOINT: '' },
     'endpoint-userinfo': { TYPESAFE_ENDPOINT: 'https://PRIVATE_CANARY@gateway.invalid' },
@@ -185,23 +229,26 @@ export async function collectExamples(root: string): Promise<Record[]> {
     'endpoint-query': { TYPESAFE_ENDPOINT: 'https://gateway.invalid?key=PRIVATE_CANARY' },
     'endpoint-scheme': { TYPESAFE_ENDPOINT: 'file:///PRIVATE_CANARY' },
   };
-  for (const [id, extra] of Object.entries(configurations)) await skill(`configuration-${id}`, [], '', 2, extra);
-  await skill('unknown-argument-private', [], '', 2, {}, ['--unknown=PRIVATE_CANARY', request]);
+  for (const [id, extra] of Object.entries(configurations)) await skill(`configuration-${id}`, [], '', 2, extra, [request], undefined, configurationContract);
+  await skill('unknown-argument-private', [], '', 2, {}, ['--unknown=PRIVATE_CANARY', request], undefined, 'The skill CLI rejects unrecognized arguments before inference with exit 2, empty stdout and a sanitized diagnostic directing the caller to --help. It must not echo private argument contents or a traceback, or report a successful abstention.');
 
   const writeSkill = (dir: string, folder: string, id = 'alpha', description = 'A synthetic skill.', body = 'Follow the synthetic procedure.'): void => {
     mkdirSync(join(dir, folder), { recursive: true });
     writeFileSync(join(dir, folder, 'SKILL.md'), `---\nname: ${id}\ndescription: ${JSON.stringify(description)}\n---\n${body}\n`);
+    const records = privateFixtureRecords.get(dir) ?? [];
+    records.push({ id, description, description_full: description, body, category: 'uncategorized' });
+    privateFixtureRecords.set(dir, records);
   };
   const privateDir = join(scratch, 'private-roster'); writeSkill(privateDir, 'alpha');
-  await skill('private-needs-consent', [], '', 2, { SKILLS_LIBRARY_PATH: privateDir });
-  await skill('single-candidate-two-stages', replies(rank(.8, .8, .1, { alpha: 1 }), finalChoice([.8], ['alpha'], 'alpha')), 'alpha\n', 0, { SKILLS_LIBRARY_PATH: privateDir }, [request, '--allow-private']);
+  await skill('private-needs-consent', [], '', 2, { SKILLS_LIBRARY_PATH: privateDir }, [request], undefined, 'An environment-bound corpus is private even when its content is a synthetic fixture. Without --allow-private the CLI must refuse before inference, with exit 2, empty stdout and a sanitized diagnostic. It must neither transmit the corpus nor fall back to public skills or a successful abstention.');
+  await skill('single-candidate-two-stages', replies(rank(.8, .8, .1, { alpha: 1 }), finalChoice([.8], ['alpha'], 'alpha')), 'alpha\n', 0, { SKILLS_LIBRARY_PATH: privateDir }, [request, '--allow-private'], undefined, singletonContract);
   const relocated: ObjectValue[][] = [];
   const relocationInputs: ObjectValue[] = [];
   for (const name of ['short', 'longer-synthetic-corpus-location']) {
     const location = join(scratch, name);
     writeSkill(location, 'renamed-folder', 'alpha', `Read ${location}/guide.`, 'é'.repeat(650) + `\nUse ${location}/tool then ${encodeURIComponent(location)}/other. ` + 'Z'.repeat(900));
     relocationInputs.push({ binding: location, request: `Use ${location}/guide.`, filesystem: fixturePath(location) });
-    relocated.push(await skill(`relocation-${name}`, replies(rank(.8, .8, .1, { alpha: 1 }), finalChoice([.8], ['alpha'], 'alpha')), 'alpha\n', 0, { SKILLS_LIBRARY_PATH: location }, [`Use ${location}/guide.`, '--allow-private'], calls => !JSON.stringify(calls).includes(location) && !JSON.stringify(calls).includes(encodeURIComponent(location))));
+    relocated.push(await skill(`relocation-${name}`, replies(rank(.8, .8, .1, { alpha: 1 }), finalChoice([.8], ['alpha'], 'alpha')), 'alpha\n', 0, { SKILLS_LIBRARY_PATH: location }, [`Use ${location}/guide.`, '--allow-private'], calls => !JSON.stringify(calls).includes(location) && !JSON.stringify(calls).includes(encodeURIComponent(location)), relocationContract));
   }
   record('skill.relocation-equivalence', 'Equivalent private corpora in different directories produce identical root-free requests; redact before taking 700 Unicode codepoints.', { runs: relocated.map((calls, index) => ({ input: relocationInputs[index], capturedRequests: calls.map(call => ({ path: call.path, body: call.body })) })), identicalRequests: same(relocated[0], relocated[1]), containsPlaceholder: JSON.stringify(relocated[0]).includes('${SKILLS_LIBRARY_PATH}') }, same(relocated[0], relocated[1]) && JSON.stringify(relocated[0]).includes('${SKILLS_LIBRARY_PATH}'));
   const wideDir = join(scratch, 'wide-roster');
@@ -209,43 +256,54 @@ export async function collectExamples(root: string): Promise<Record[]> {
   for (const id of wideIds) writeSkill(wideDir, id, id, 'Complete long description. '.repeat(20));
   await skill('wide-roster-not-truncated', replies(rank(0, 0, 1, Object.fromEntries(wideIds.map(id => [id, 1 / 25])))), 'no suggestion\n', 0, { SKILLS_LIBRARY_PATH: wideDir }, [request, '--allow-private'], calls => same(Object.keys(calls[0].body.questions.which.criteria), wideIds) && calls[0].body.questions.which.criteria[wideIds[0]].length > 400);
 
-  const rosterContract = 'Invalid, missing, duplicate or symlinked private corpora fail without fallback. Portable IDs and sorting come from skill names. Descriptions preserve multiline text. Only complete exact JSON records are accepted.';
-  const corpus = async (id: string, path: string, expectedError: string | null, check?: (v: ObjectValue) => boolean): Promise<void> => {
+  const missingRosterContract = 'A direct load_roster call with an explicit missing corpus path must raise RosterError and return no roster. It must not discover another private library or fall back to the bundled public demo.';
+  const jsonRosterContract = 'A direct load_roster call on a JSON corpus accepts only a nonempty array of records with unique portable IDs. Each record must contain exactly id, description, description_full, body and category, all nonempty strings. IDs must be portable lowercase names, not paths. Invalid input raises RosterError and returns no roster, without fallback; an empty array and repeated IDs are invalid even when individual records are otherwise valid.';
+  const yamlRosterContract = 'A direct load_roster call on a directory reads SKILL.md YAML frontmatter with unique string field names, a portable lowercase name and a nonempty string description, plus a nonempty body. Missing/malformed frontmatter, duplicate metadata fields, non-string text or a path-like name raises RosterError and returns no roster without fallback.';
+  const symlinkRosterContract = 'A direct load_roster call must reject a symbolic-link corpus root, a directory symlink within the corpus, or a SKILL.md symlink with RosterError and no roster. Even when the link targets a valid existing skill, it must not be followed or replaced by the public demo.';
+  const corpus = async (id: string, path: string, expectedError: string | null, operationContract: string, check?: (v: ObjectValue) => boolean): Promise<void> => {
     const actual = await call('skill_suggestion', 'load_roster', [path], [], { environ: {} });
-    record(`roster.${id}`, rosterContract, { input: { function: 'load_roster', path, environ: {}, ...(path.trim() === '' ? { explicitPathArgument: true, pathCodepoints: [...path].map(character => character.codePointAt(0)), trimmedPathLength: path.trim().length } : {}), filesystem: fixturePath(path) }, implementationExcerpt: excerpt('skill_suggestion', ['_validate_record', ...(path.trim() === '' ? ['load_roster'] : [])]), outcome: actual }, expectedError ? !actual.ok && actual.error === expectedError : actual.ok && (!check || check(actual.value)));
+    record(`roster.${id}`, operationContract, { scope: 'One direct load_roster invocation, not the suggestion CLI or inference. outcome.ok=false means the function raised the recorded exception and returned no roster.', input: { function: 'load_roster', path, environ: {}, ...(path.trim() === '' ? { explicitPathArgument: true, pathCodepoints: [...path].map(character => character.codePointAt(0)), trimmedPathLength: path.trim().length } : {}), filesystem: fixturePath(path), ...(id.startsWith('symlink-') ? { existingTargetCorpus: fixturePath(privateDir) } : {}) }, implementationExcerpt: excerpt('skill_suggestion', ['Roster', '_text', '_validate_record', 'load_roster', ...(id.startsWith('yaml-') || id === 'multiline-description' || id === 'portable-sort' ? ['_parse_skill', '_unique_object'] : [])]), outcome: actual }, expectedError ? !actual.ok && actual.error === expectedError : actual.ok && (!check || check(actual.value)));
   };
-  await corpus('missing-no-fallback', join(scratch, 'absent'), 'RosterError');
-  await corpus('empty-binding', ' ', 'ConfigurationError');
+  await corpus('missing-no-fallback', join(scratch, 'absent'), 'RosterError', missingRosterContract);
+  await corpus('empty-binding', ' ', 'ConfigurationError', 'An explicit blank or whitespace-only corpus binding is invalid configuration, not an instruction to load the public demo. load_roster must raise ConfigurationError and return no roster without fallback.');
   const duplicate = join(scratch, 'duplicate'); writeSkill(duplicate, 'one'); writeSkill(duplicate, 'two');
-  await corpus('duplicate-id', duplicate, 'RosterError');
+  await corpus('duplicate-id', duplicate, 'RosterError', 'A directory corpus must have unique portable skill IDs derived from SKILL.md name metadata, independently of folder names. Repeated names in different folders raise RosterError and return no roster without fallback.');
   const ordering = join(scratch, 'ordering'); writeSkill(ordering, 'aaa', 'zeta'); writeSkill(ordering, 'zzz', 'alpha');
-  await corpus('portable-sort', ordering, null, value => same(value.skills.map((s: ObjectValue) => s.id), ['alpha', 'zeta']));
+  await corpus('portable-sort', ordering, null, 'A valid directory corpus returns all skills sorted by portable IDs taken from SKILL.md name metadata, not directory names. An explicit corpus is marked private.', value => same(value.skills.map((s: ObjectValue) => s.id), ['alpha', 'zeta']));
   const valid = { id: 'alpha', description: 'A', description_full: 'B', body: 'C', category: 'D' };
   for (const [id, value] of Object.entries({ object: { skills: [valid] }, empty: [], missing: [{ id: 'alpha', description: 'A', body: 'C', category: 'D' }], badID: [{ ...valid, id: '../alpha' }], badText: [{ ...valid, description: ['bad'] }], unknown: [{ ...valid, location: 'PRIVATE_CANARY' }], duplicate: [valid, valid] })) {
-    const file = join(scratch, `roster-${id}.json`); save(file, value); await corpus(`json-${id}`, file, 'RosterError');
+    const file = join(scratch, `roster-${id}.json`); save(file, value); await corpus(`json-${id}`, file, 'RosterError', jsonRosterContract);
   }
   for (const [id, document] of Object.entries({ malformed: '---\nname: alpha\ndescription: [unterminated\n---\nBody', duplicate: '---\nname: alpha\nname: beta\ndescription: A\n---\nBody', boolean: '---\nname: alpha\ndescription: true\n---\nBody', path: '---\nname: ../alpha\ndescription: A\n---\nBody', missing: 'No frontmatter' })) {
-    const dir = join(scratch, `yaml-${id}`); mkdirSync(dir); writeFileSync(join(dir, 'SKILL.md'), document); await corpus(`yaml-${id}`, dir, 'RosterError');
+    const dir = join(scratch, `yaml-${id}`); mkdirSync(dir); writeFileSync(join(dir, 'SKILL.md'), document); await corpus(`yaml-${id}`, dir, 'RosterError', yamlRosterContract);
   }
   const multiline = join(scratch, 'multiline'); mkdirSync(multiline); writeFileSync(join(multiline, 'SKILL.md'), '---\r\nname: alpha\r\ndescription: |\r\n  First line.\r\n  Second line.\r\n---\r\nBody.\r\n');
-  await corpus('multiline-description', multiline, null, value => value.skills[0].description === 'First line.\nSecond line.' && value.skills[0].body === 'Body.');
-  const linked = join(scratch, 'linked-roster'); symlinkSync(privateDir, linked, 'dir'); await corpus('symlink-root', linked, 'RosterError');
-  const linkedChild = join(scratch, 'linked-child'); mkdirSync(linkedChild); symlinkSync(privateDir, join(linkedChild, 'nested'), 'dir'); await corpus('symlink-directory', linkedChild, 'RosterError');
-  const linkedFile = join(scratch, 'linked-file'); mkdirSync(linkedFile); symlinkSync(join(privateDir, 'alpha/SKILL.md'), join(linkedFile, 'SKILL.md')); await corpus('symlink-file', linkedFile, 'RosterError');
+  await corpus('multiline-description', multiline, null, 'A valid SKILL.md corpus preserves the complete multiline description. CRLF/CR line endings become LF and outer whitespace is stripped from metadata/body, without collapsing internal line breaks.', value => value.skills[0].description === 'First line.\nSecond line.' && value.skills[0].body === 'Body.');
+  const linked = join(scratch, 'linked-roster'); symlinkSync(privateDir, linked, 'dir'); await corpus('symlink-root', linked, 'RosterError', symlinkRosterContract);
+  const linkedChild = join(scratch, 'linked-child'); mkdirSync(linkedChild); symlinkSync(privateDir, join(linkedChild, 'nested'), 'dir'); await corpus('symlink-directory', linkedChild, 'RosterError', symlinkRosterContract);
+  const linkedFile = join(scratch, 'linked-file'); mkdirSync(linkedFile); symlinkSync(join(privateDir, 'alpha/SKILL.md'), join(linkedFile, 'SKILL.md')); await corpus('symlink-file', linkedFile, 'RosterError', symlinkRosterContract);
 
   const publicRoot = join(scratch, 'public'); mkdirSync(publicRoot); mkdirSync(join(publicRoot, 'examples'));
   writeFileSync(join(publicRoot, 'router.go'), 'public source');
   // All forbidden targets exist: removing the boundary must expose a canary,
   // never appear to pass because a missing file happens to throw ENOENT.
   for (const path of [join(publicRoot, '.env'), join(publicRoot, 'backends.json'), join(scratch, 'router.go'), join(privateDir, 'skill_suggestion.py')]) writeFileSync(path, 'PRIVATE_CANARY');
-  const privacyContract = 'The public review collector exports only exact allowlisted canonical regular files, rejects file/directory symlinks, files above 256 KiB, and absolute repository roots in content. Impact evidence projects only public IDs and fixed coverage enums; status success is not impact evidence.';
+  const privacyContract = 'A direct read_public call returns text only from an exact allowlisted canonical relative path that resolves through regular, non-symlink files/directories. It rejects unlisted paths and normalized aliases, files above 256 KiB, and content containing the absolute repository root. A rejected input raises an exception and returns no source text; this call does not collect impact evidence or send inference.';
+  const symlinkPrivacyContract = 'For an exact allowlisted relative path, read_public must refuse a symlink at the file or directory component even when its target exists. No-follow open failures such as OSError or NotADirectoryError are rejections: no source text is returned. This call exercises the file-export boundary, not impact projection or inference.';
+  const impactContract = 'sanitize_impact accepts successful true-up impact JSON and projects only public allowlisted IDs, declared invariant fragments, permitted edge kinds and fixed coverage enums. It omits private roots, raw values and messages, counts omitted records, and does not treat omissions as cleared findings. It returns a projection, not source-file content or semantic proof.';
+  const invalidImpactContract = 'sanitize_impact requires ok=true and arrays named changedFacts, mechanical and advisory. A status-only object is not impact evidence, even if it says ok/green; an impact-shaped object with ok=false is also invalid. The direct call must raise ValueError and return no projection. This is validation of supplied evidence, not a source-file export or inference operation.';
+  // A rejection alone cannot establish allowlist compliance without the actual
+  // allowlist and canonical-path policy that governed this invocation.
+  const privacySource = readFileSync(join(root, 'examples/parity_review.py'), 'utf8');
+  const privacyPolicy = privacySource.slice(0, privacySource.indexOf('\ndef allowed_path('))
+    + excerpt('parity_review', ['allowed_path', 'read_public']);
   for (const [id, path] of Object.entries({ env: '.env', traversal: '../router.go', dotted: './router.go', absolute: join(publicRoot, 'router.go'), nestedTraversal: 'examples/../router.go', registry: 'backends.json', allowed: 'router.go' })) {
     const value = await call('parity_review', 'read_public', [publicRoot, path], [0]);
-    record(`privacy.path-${id}`, privacyContract, { input: { root: publicRoot, relativePath: path, filesystem: fixturePath(publicRoot) }, outcome: value }, path === 'router.go' ? value.ok && value.value === 'public source' : !value.ok && value.error === 'ValueError');
+    record(`privacy.path-${id}`, privacyContract, { input: { root: publicRoot, relativePath: path, filesystem: fixturePath(publicRoot) }, implementationExcerpt: privacyPolicy, outcome: value }, path === 'router.go' ? value.ok && value.value === 'public source' : !value.ok && value.error === 'ValueError');
   }
   const publicLinks = join(scratch, 'public-links'); mkdirSync(publicLinks); symlinkSync(join(publicRoot, 'router.go'), join(publicLinks, 'router.go')); symlinkSync(privateDir, join(publicLinks, 'examples'), 'dir');
   for (const path of ['router.go', 'examples/skill_suggestion.py']) {
-    const value = await call('parity_review', 'read_public', [publicLinks, path], [0]); record(`privacy.symlink-${path}`, privacyContract, { input: { root: publicLinks, relativePath: path, filesystem: fixturePath(publicLinks), targets: [fixturePath(publicRoot), fixturePath(privateDir)] }, outcome: value }, !value.ok && ['OSError', 'NotADirectoryError'].includes(value.error));
+    const value = await call('parity_review', 'read_public', [publicLinks, path], [0]); record(`privacy.symlink-${path}`, symlinkPrivacyContract, { scope: 'One direct read_public invocation. A captured exception means no source text was returned.', input: { function: 'read_public', root: publicLinks, relativePath: path, filesystem: fixturePath(publicLinks), targets: [fixturePath(publicRoot), fixturePath(privateDir)] }, implementationExcerpt: privacyPolicy, outcome: value }, !value.ok && ['OSError', 'NotADirectoryError'].includes(value.error));
   }
   for (const [id, content, allowed] of [['at-limit', 'x'.repeat(256 * 1024), true], ['over-limit', 'x'.repeat(256 * 1024 + 1), false], ['root-in-content', publicRoot, false]] as const) {
     writeFileSync(join(publicRoot, 'router.go'), content); const value = await call('parity_review', 'read_public', [publicRoot, 'router.go'], [0]);
@@ -257,9 +315,9 @@ export async function collectExamples(root: string): Promise<Record[]> {
     { node: 'fact:contract/invariants.json#PRIVATE_CANARY', fromSource: 'file:router.go', kind: 'derives-facts-from' },
   ], proof: { sources: [{ source: 'file:router.go', dependents: [{ node: 'file:conformance/routing_test.go', kind: 'derives-facts-from', status: 'not-changed-in-range', message: 'PRIVATE_CANARY' }] }] } };
   const projection = await call('parity_review', 'sanitize_impact', [impact, ['routing.soft-eligibility']]);
-  record('privacy.impact-projection', privacyContract, { input: { impact, invariantIDs: ['routing.soft-eligibility'] }, outcome: projection }, projection.ok && !JSON.stringify(projection).includes('PRIVATE_CANARY') && projection.value.omitted_records === 3 && same(projection.value.changed_facts, ['router.go']) && projection.value.edges[1].coverage === 'not-changed-in-range');
+  record('privacy.impact-projection', impactContract, { input: { function: 'sanitize_impact', impact, invariantIDs: ['routing.soft-eligibility'] }, implementationExcerpt: privacySource.slice(0, privacySource.indexOf('\ndef allowed_path(')) + excerpt('parity_review', ['sanitize_impact']), outcome: projection }, projection.ok && !JSON.stringify(projection).includes('PRIVATE_CANARY') && projection.value.omitted_records === 3 && same(projection.value.changed_facts, ['router.go']) && projection.value.edges[1].coverage === 'not-changed-in-range');
   for (const [id, value] of Object.entries({ status: { ok: true, green: true }, failed: { ok: false, changedFacts: [], mechanical: [], advisory: [] } })) {
-    const actual = await call('parity_review', 'sanitize_impact', [value, []]); record(`privacy.invalid-impact-${id}`, privacyContract, { input: { impact: value, invariantIDs: [] }, outcome: actual }, !actual.ok);
+    const actual = await call('parity_review', 'sanitize_impact', [value, []]); record(`privacy.invalid-impact-${id}`, invalidImpactContract, { scope: 'One direct sanitize_impact invocation. outcome.ok=false means the supplied object was rejected and no projection was returned.', input: { function: 'sanitize_impact', impact: value, invariantIDs: [] }, implementationExcerpt: excerpt('parity_review', ['sanitize_impact']), outcome: actual }, !actual.ok);
   }
 
   await evidenceScenarios();
@@ -340,6 +398,12 @@ export async function collectExamples(root: string): Promise<Record[]> {
 
   async function evidenceScenarios(): Promise<void> {
     const contract = 'Model admission requires current rubric/candidate review plus complete matching native/gateway evidence. Missing evidence is not readiness; violations reject, uncertainty holds. Recompute wire integrity, typed-answer semantics, exact usage and bounded numeric parity even when stored hashes match. Local gate never performs inference.';
+    const missingEvidenceContract = 'The gate CLI validates supplied local review and probe bundles, not just their prior reports. With a supporting review, omitting the probe argument yields needs_endpoint_test; supplying a bundle with any required request, response, wire capture, report, candidate or fixture file missing fails with exit 2 and missing_input, without a readiness decision. The gate performs no inference.';
+    const reviewDecisionContract = 'The local gate first verifies the current candidate/rubric binding, review hashes, wire consistency and typed answers. A selected violation or out_of_scope label rejects. Otherwise, a selected insufficient_evidence label or selected-label probability below 0.80 holds, even when the label is clear and the separate Choice confidence is 0.80 or higher. Reject/hold exits 1 before endpoint-probe validation and never grants readiness. Neither the reject/hold decision nor validating local evidence performs inference.';
+    const recomputedParityContract = 'With a supporting current review and a complete local probe bundle, the gate must recompute wire integrity, typed-answer validity, native identity and parity rather than trust saved passed flags or refreshed hashes. Usage and labels must match exactly. Recursive parity compares two Python integers exactly; other numeric pairs (including integer/float pairs) use the recorded absolute tolerance with no relative tolerance, constrained to [0, 0.01]. A self-consistent numeric change within that tolerance can yield ready_for_opt_in; outside-tolerance, usage, identity or typed-answer violations cannot. Readiness is only for the supplied endpoint fixtures, not production certification. The gate performs no inference.';
+    const choiceValidationContract = 'A direct validate_answers call checks answer coverage, requested types, finite probabilities and confidence in [0,1], a normalized distribution over exactly the Choice criteria, and nonnegative integer token usage. A selected Choice must have maximum probability; either tied maximum is valid, with no first-option tie-break requirement. Validation returns normally or raises a coded error; this call neither reviews a candidate nor makes an admission decision.';
+    const scoreValidationContract = 'A direct validate_answers call checks answer coverage and types, finite probabilities and confidence in [0,1], a normalized distribution over exactly the Score levels, the requested index-to-rubric legend, the probability-weighted expected score, and nonnegative integer token usage. Invalid responses raise an error. Successful answer validation alone is not backend admission.';
+    const parityContract = 'The same subroutine compares complete values recursively. Integers and labels must match exactly, including integers beyond JavaScript safe precision; noninteger numbers use the supplied absolute tolerance with no relative tolerance. The returned Boolean is a value-comparison result, not an admission decision.';
     const nativeAnswer = (body: ObjectValue): ObjectValue => {
       const reviewer = body.model === 'reviewer'; // ubs:ignore[javascript.ctcompare.unsafe_secret_compare] Public synthetic model selector, not authentication.
       const answers = Object.fromEntries(Object.entries(body.questions).map(([id, raw]) => {
@@ -375,8 +439,8 @@ export async function collectExamples(root: string): Promise<Record[]> {
       }));
       const baselineArtifacts = capture(base);
       const baselineGate = await cli('system_one_check', ['gate', '--candidate', join(base, 'candidate.json'), '--review', join(base, 'review'), '--probe', join(base, 'probe')]);
-      const baseline = { candidate, fixture, artifactPaths, observedGate: serializableRun(baselineGate), reviewAnswers: baselineArtifacts['review/response.json'].answers, nativeResponse: baselineArtifacts['probe/case-0-native-response.json'], gatewayResponse: baselineArtifacts['probe/case-0-gateway-response.json'] };
-      const admissionPolicy = excerpt('system_one_check', ['validate_probe_inputs', 'gate']);
+      const baseline = { scope: 'Unmodified fixture preparation, before copying or mutating evidence for the invocation under review.', candidate, fixture, artifactPaths, priorExecution: serializableRun(baselineGate), reviewAnswers: baselineArtifacts['review/response.json'].answers, nativeResponse: baselineArtifacts['probe/case-0-native-response.json'], gatewayResponse: baselineArtifacts['probe/case-0-gateway-response.json'], recordedTolerance: baselineArtifacts['probe/report.json'].tolerance };
+      const admissionPolicy = excerpt('system_one_check', ['read', 'probability', 'validate_answers', 'same', 'validate_parity', 'validate_probe_inputs', 'validate_wire', 'validate_probe_bundle', 'gate']);
       const difference = (before: any, after: any, path = ''): ObjectValue[] => {
         if (same(before, after)) return [];
         if (before && after && typeof before === 'object' && typeof after === 'object' && !Array.isArray(before) && !Array.isArray(after)) {
@@ -386,7 +450,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
         }
         return [{ path, before: before ?? null, after: after ?? null }];
       };
-      const mutations = async (id: string, expected: string, edit?: (dir: string) => void, withProbe = true): Promise<void> => {
+      const mutations = async (id: string, expected: string, edit?: (dir: string) => void, withProbe = true, operationContract = contract): Promise<void> => {
         const dir = join(scratch, `gate-${id}`); mkdirSync(dir); mkdirSync(join(dir, 'review')); mkdirSync(join(dir, 'probe'));
         for (const name of ['candidate.json', 'fixtures.json']) copyFileSync(join(base, name), join(dir, name));
         for (const sub of ['review', 'probe']) for (const name of readdirSync(join(base, sub))) copyFileSync(join(base, sub, name), join(dir, sub, name));
@@ -394,14 +458,25 @@ export async function collectExamples(root: string): Promise<Record[]> {
         const changed = capture(dir);
         const changes = artifactPaths.filter(path => !same(baselineArtifacts[path], changed[path])).map(path => ({ artifact: path,
           ...(changed[path] === null ? { before: { present: true, sha256: digest(baselineArtifacts[path]) }, after: { present: false } } : { fields: difference(baselineArtifacts[path], changed[path]) }) }));
+        const selectedReviewAnswers = Object.entries(changed['review/response.json']?.answers || {}).map(([question, raw]) => {
+          const answer = raw as ObjectValue, selectedProbability = answer.probabilities?.[answer.choice];
+          return { question, choice: answer.choice, confidence: answer.confidence, selectedProbability: selectedProbability ?? null, holdProbabilityThreshold: .80, belowHoldThreshold: typeof selectedProbability === 'number' ? selectedProbability < .80 : null };
+        });
+        const direct = changed['probe/case-0-native-response.json'], proxied = changed['probe/case-0-gateway-response.json'], tolerance = changed['probe/report.json']?.tolerance;
+        const numericDifferences = difference(direct, proxied).filter(change => typeof change.before === 'number' && typeof change.after === 'number').map(change => ({
+          path: change.path, native: change.before, gateway: change.after, absoluteDelta: Math.abs(change.before - change.after),
+          absoluteTolerance: typeof tolerance === 'number' ? tolerance : null,
+          withinAbsoluteTolerance: typeof tolerance === 'number' ? Math.abs(change.before - change.after) <= tolerance : null,
+        }));
         const before = calls.length;
-        const result = await cli('system_one_check', ['gate', '--candidate', join(dir, 'candidate.json'), '--review', join(dir, 'review'), ...(withProbe ? ['--probe', join(dir, 'probe')] : [])]);
+        const argv = ['gate', '--candidate', join(dir, 'candidate.json'), '--review', join(dir, 'review'), ...(withProbe ? ['--probe', join(dir, 'probe')] : [])];
+        const result = await cli('system_one_check', argv);
         let decision: string | null = null, error: string | null = null;
         try { decision = JSON.parse(result.stdout).decision; } catch { try { error = JSON.parse(result.stderr).error.code; } catch {} }
         const expectedExit = ['ready_for_opt_in'].includes(expected) ? 0 : ['needs_endpoint_test', 'reject', 'hold'].includes(expected) ? 1 : 2;
-        record(`admission.${id}`, contract, { input: { baseline, mutations: changes, probeArgumentSupplied: withProbe }, implementationExcerpt: admissionPolicy, exit: result.exit, decision, error, additionalInferenceCalls: calls.length - before, leaksRoot: result.stderr.includes(scratch), traceback: result.stderr.includes('Traceback') }, result.exit === expectedExit && (decision || error) === expected && calls.length === before && !result.stderr.includes(scratch) && !result.stderr.includes('PRIVATE_CANARY') && !result.stderr.includes('Traceback'));
+        record(`admission.${id}`, operationContract, { scope: 'One gate CLI execution against the copied evidence after applying the listed mutations. Saved reports and the prior execution describe fixture preparation, not a verdict on this mutated invocation.', fixtureBeforeMutation: baseline, input: { argv, mutations: changes, probeArgumentSupplied: withProbe, artifactPresence: Object.fromEntries(artifactPaths.map(path => [path, existsSync(join(dir, path))])), evidenceBundleAfterMutation: changed }, computedFromSuppliedEvidence: { selectedReviewAnswers, numericParity: { recordedTolerance: tolerance ?? null, relativeTolerance: 0, differences: numericDifferences, nativeUsage: direct?.usage ?? null, gatewayUsage: proxied?.usage ?? null, exactUsageEqual: direct && proxied ? same(direct.usage, proxied.usage) : null } }, implementationExcerpt: admissionPolicy, result: { ...serializableRun(result), decision, error, additionalInferenceCalls: calls.length - before } }, result.exit === expectedExit && (decision || error) === expected && calls.length === before && !result.stderr.includes(scratch) && !result.stderr.includes('PRIVATE_CANARY') && !result.stderr.includes('Traceback'));
       };
-      await mutations('needs-probe', 'needs_endpoint_test', undefined, false);
+      await mutations('needs-probe', 'needs_endpoint_test', undefined, false, missingEvidenceContract);
       await mutations('complete-ready', 'ready_for_opt_in');
       // Copy only the remaining evidence into a fresh directory: no deletion is needed.
       for (const sub of ['review', 'probe']) for (const name of readdirSync(join(base, sub))) {
@@ -409,7 +484,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
         await mutations(`missing-${sub}-${name}`, 'missing_input', dir => {
           // Move only this fresh fixture copy aside; retain original evidence.
           renameSync(join(dir, sub, name), join(dir, `${sub}-retained-${name}`));
-        });
+        }, true, missingEvidenceContract);
       }
       const alter = (dir: string, path: string, fn: (v: ObjectValue) => void): void => { const value = read(join(dir, path)); fn(value); save(join(dir, path), value); };
       for (const path of ['probe/candidate.json', 'probe/fixtures.json', 'probe/case-0-native-request.json', 'probe/case-0-gateway-response.json']) await mutations(`corrupt-${path.replaceAll('/', '-')}`, 'probe_mismatch', dir => alter(dir, path, v => { v.extra = 'corruption'; }));
@@ -435,7 +510,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
         const resp = read(join(dir, 'review/response.json'));
         resp.answers['inference-boundary'] = outcome === 'reject' ? choice('violation', { clear: 0, violation: 1, insufficient_evidence: 0 }) : choice('clear', { clear: .6, violation: .1, insufficient_evidence: .3 });
         bindReview(dir, read(join(dir, 'review/request.json')), resp);
-      });
+      }, true, reviewDecisionContract);
       await mutations('review-hash-mismatch', 'review_mismatch', dir => alter(dir, 'review/response.json', v => { v.usage.input_tokens++; }));
       for (const [id, code, change] of [
         ['parity', 'parity_mismatch', (v: ObjectValue) => { v.answers.pick.confidence = .8; }],
@@ -447,7 +522,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
         const resp = read(join(dir, 'probe/case-0-gateway-response.json')); change(resp);
         save(join(dir, 'probe/case-0-gateway-response.json'), resp); save(join(dir, 'probe/case-0-gateway-response-wire.json'), resp);
         alter(dir, 'probe/report.json', report => { report.cases[0].gateway_sha256 = digest(resp); });
-      });
+      }, true, recomputedParityContract);
       for (const tolerance of [-1, .02, true]) await mutations(`invalid-tolerance-${tolerance}`, 'invalid_tolerance', dir => alter(dir, 'probe/report.json', report => { report.tolerance = tolerance; }));
       await mutations('invalid-json-private', 'invalid_json', dir => writeFileSync(join(dir, 'probe/fixtures.json'), 'PRIVATE_CANARY'));
     });
@@ -462,20 +537,20 @@ export async function collectExamples(root: string): Promise<Record[]> {
     const score = { answers: { q: { type: 'score', score: .75, confidence: .75, legend: { '0': 'Low', '1': 'High' }, probabilities: { '0': .25, '1': .75 } } }, usage: { input_tokens: 2, output_tokens: 0 } };
     for (const variant of ['valid', 'wrong-score', 'wrong-legend']) {
       const value = clone(score); if (variant === 'wrong-score') value.answers.q.score = .25; if (variant === 'wrong-legend') value.answers.q.legend['0'] = 'High';
-      const actual = await call('system_one_check', 'validate_answers', [scoreRequest, value]); record(`admission.score-${variant}`, contract, { input: { function: 'validate_answers', request: scoreRequest, response: value }, implementationExcerpt: excerpt('system_one_check', ['validate_answers']), outcome: actual }, actual.ok === (variant === 'valid'));
+      const actual = await call('system_one_check', 'validate_answers', [scoreRequest, value]); record(`admission.score-${variant}`, scoreValidationContract, { scope: 'One validate_answers invocation; this does not execute the backend-admission gate.', input: { function: 'validate_answers', request: scoreRequest, response: value }, implementationExcerpt: excerpt('system_one_check', ['probability', 'validate_answers']), outcome: actual }, actual.ok === (variant === 'valid'));
     }
     for (const winner of ['a', 'b']) {
       const request = { questions: { q: { type: 'choice', criteria: { a: 'A', b: 'B' } } } }, reply = response({ q: choice(winner, { a: .5, b: .5 }) });
       const actual = await call('system_one_check', 'validate_answers', [request, reply]);
-      record(`admission.choice-tie-${winner}`, contract, { input: { function: 'validate_answers', request, response: reply }, implementationExcerpt: excerpt('system_one_check', ['validate_answers']), outcome: actual }, actual.ok);
+      record(`admission.choice-tie-${winner}`, choiceValidationContract, { scope: 'One validate_answers invocation; this does not execute the backend-admission gate.', input: { function: 'validate_answers', request, response: reply }, implementationExcerpt: excerpt('system_one_check', ['probability', 'validate_answers']), outcome: actual }, actual.ok);
     }
     for (const [id, left, right, expected] of [['within', { p: .5 }, { p: .5000001 }, true], ['outside', { p: .5 }, { p: .51 }, false], ['choice', { choice: 'a' }, { choice: 'b' }, false]] as const) {
-      const actual = await call('system_one_check', 'same', [left, right, 1e-6]); record(`admission.numeric-${id}`, contract, { input: { function: 'same', left, right, tolerance: 1e-6 }, implementationExcerpt: excerpt('system_one_check', ['same']), outcome: actual }, actual.ok && actual.value === expected);
+      const actual = await call('system_one_check', 'same', [left, right, 1e-6]); record(`admission.numeric-${id}`, parityContract, { input: { function: 'same', left, right, tolerance: 1e-6 }, implementationExcerpt: excerpt('system_one_check', ['same']), outcome: actual }, actual.ok && actual.value === expected);
     }
     // Keep these integer JSON literals out of JavaScript's lossy Number domain.
     const integers = await run(['-c', bridge], {}, '{"module":"system_one_check","function":"same","args":[9007199254740992,9007199254740993,0.000001]}');
     const actual = parse(integers.stdout);
-    record('admission.integer-precision', contract, { input: { function: 'same', rawJSONArguments: '[9007199254740992,9007199254740993,0.000001]', numericTypeAfterJSONDecode: 'Python int', tolerance: 1e-6 }, implementationExcerpt: excerpt('system_one_check', ['same']), outcome: actual }, integers.exit === 0 && actual.ok && actual.value === false);
+    record('admission.integer-precision', parityContract, { input: { function: 'same', rawJSONArguments: '[9007199254740992,9007199254740993,0.000001]', numericTypeAfterJSONDecode: 'Python int', tolerance: 1e-6 }, implementationExcerpt: excerpt('system_one_check', ['same']), outcome: actual }, integers.exit === 0 && actual.ok && actual.value === false);
   }
   async function releaseScenarios(): Promise<void> {
     const contract = 'Public-release review lists files through Git, so ignored files are never opened or sent, including a file tracked despite the ignore rules, which is reported unreviewed; symbolic links are reported unreviewed, never followed. Every chunk is ONE native System One request carrying the whole versioned battery under the explicit --model. Nothing is sent without --confirm-send. Code thresholds turn Noul, Choice and Score answers into pass, note, review or block. Output holds answers and paths, never file content. Findings or unreviewed paths exit 1; refusals and failures exit 2. With --history, blobs reachable from refs but absent from the index are reviewed too; a historical path that current ignore rules exclude is reported unreviewed, which makes the run exit 1 even without model findings, and its content is never sent. Text already answered in the same output ledger is not sent again, within a run or across resumed runs.';
@@ -484,6 +559,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
     const repo = join(scratch, 'release-repo'); mkdirSync(join(repo, 'src'), { recursive: true });
     const git = (...args: string[]): void => { if (spawnSync('git', args, { cwd: repo, env: { PATH: env.PATH, HOME: scratch, GIT_CONFIG_NOSYSTEM: '1' }, timeout: 30_000 }).status !== 0) throw new Error('release_fixture_git_failed'); };
     git('init', '-q');
+    git('config', 'fixture.private-canary', 'GIT_METADATA_CANARY');
     writeFileSync(join(repo, '.gitignore'), '.env\n*.pem\n');
     writeFileSync(join(repo, 'forced.pem'), 'PRIVATE_CANARY force-added despite the ignore rule\n');
     writeFileSync(join(repo, '.env'), 'TOKEN=PRIVATE_CANARY\n');
@@ -503,7 +579,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
       const bound = { TYPESAFE_ENDPOINT: endpoint, TYPESAFE_API_KEY: 'public-loopback-fixture' };
       const refusedArgv = ['--repo', repo, '--model', 'routing-demo', '--output', join(scratch, 'release-refused')];
       const refused = await cli('public_release_review', refusedArgv, bound);
-      record('release.requires-confirmation', contract, { input: { argv: refusedArgv, repository: fixturePath(repo) }, result: serializableRun(refused), inferenceCalls: calls.length }, refused.exit === 2 && calls.length === 0 && !refused.stderr.includes('Traceback'));
+      record('release.requires-confirmation', 'Without --confirm-send, the public-release CLI must refuse with exit 2 and a sanitized diagnostic, empty stdout and zero inference calls. File review, history traversal and model scoring are not performed by this refused invocation.', { input: { argv: refusedArgv, repository: { kind: 'synthetic Git directory', exists: existsSync(repo) } }, result: serializableRun(refused), inferenceCalls: calls.length }, refused.exit === 2 && calls.length === 0 && !refused.stderr.includes('Traceback'));
       const output = join(scratch, 'release-out'), argv = ['--repo', repo, '--model', 'routing-demo', '--confirm-send', '--output', output];
       const result = await cli('public_release_review', argv, bound);
       const report = existsSync(join(output, 'report.json')) ? read(join(output, 'report.json')) : {};
@@ -513,8 +589,9 @@ export async function collectExamples(root: string): Promise<Record[]> {
       const sentPaths = wire.map(w => w.statePath).sort();
       const leaked = [JSON.stringify(calls), result.stdout, result.stderr, written].some(text => text.includes('PRIVATE_CANARY'));
       const contentStored = written.includes('Add two numbers') || written.includes('Synthetic text');
-      record('release.gitignore-and-battery', contract, { input: { argv, repository: fixturePath(repo), gitIndex: ['.gitignore', 'forced.pem (force-added although *.pem is ignored)', 'link.txt', 'src/clean.txt', 'src/flagged.txt'], fixtureRule: 'leak.secret is 0.95 for src/flagged.txt; every other Noul is 0.02; severity is level 0' }, implementationExcerpt: policySource, result: serializableRun(result), requests: wire, batteryQuestionIDs: Object.keys(battery), filesByAction: report.files_by_action ?? null, unreviewed: report.unreviewed ?? null, ignoredCanarySentOrStored: leaked, fileContentStored: contentStored },
-        result.exit === 1 && wholeBattery && !leaked && !contentStored && same(sentPaths, ['.gitignore', 'src/clean.txt', 'src/flagged.txt', 'untracked.txt']) && same(report.files_by_action?.block, ['src/flagged.txt']) && Object.keys(report.unreviewed ?? {}).sort().join() === 'forced.pem,link.txt');
+      const repositoryInput = fixturePath(repo);
+      record('release.gitignore-and-battery', contract, { input: { argv, repository: repositoryInput, gitIndex: ['.gitignore', 'forced.pem (force-added although *.pem is ignored)', 'link.txt', 'src/clean.txt', 'src/flagged.txt'], fixtureRule: 'leak.secret is 0.95 for src/flagged.txt; every other Noul is 0.02; severity is level 0' }, implementationExcerpt: policySource, result: serializableRun(result), requests: wire, batteryQuestionIDs: Object.keys(battery), filesByAction: report.files_by_action ?? null, unreviewed: report.unreviewed ?? null, ignoredCanarySentOrStored: leaked, fileContentStored: contentStored },
+        result.exit === 1 && wholeBattery && !leaked && !contentStored && !JSON.stringify(repositoryInput).includes('GIT_METADATA_CANARY') && same(sentPaths, ['.gitignore', 'src/clean.txt', 'src/flagged.txt', 'untracked.txt']) && same(report.files_by_action?.block, ['src/flagged.txt']) && Object.keys(report.unreviewed ?? {}).sort().join() === 'forced.pem,link.txt');
     });
     // History is published with a repository, and .gitignore does not filter it.
     const past = join(scratch, 'release-history-repo'); mkdirSync(past);
@@ -537,7 +614,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
         runs[mode] = { argv, result: serializableRun(result), sentPaths: calls.slice(before).map(c => c.body.state.path).sort(), sentStateFields: [...new Set(calls.slice(before).flatMap(c => Object.keys(c.body.state)))].sort(), ignoredPathsInHistory: (report.code_checks?.ignored_paths_in_history ?? []).map((e: ObjectValue) => e.path), unreviewed: report.unreviewed ?? null, scope: report.scope ?? null };
       }
       const leaked = [JSON.stringify(calls), JSON.stringify(runs)].some(text => text.includes('PRIVATE_CANARY'));
-      record('release.history', contract, { input: { repository: 'first commit adds kept.txt, removed.txt and old.pem; second commit ignores *.pem and removes removed.txt and old.pem from the index and the working tree', fixtureRule: 'every Noul is 0.02, so the model reports no findings', order: 'the worktree run is first; the history run reuses the same output ledger' }, implementationExcerpt: excerpt('public_release_review', ['list_history']), runs, ignoredCanarySentOrStored: leaked },
+      record('release.history', 'A worktree review followed by --history using the same output ledger must review reachable blobs absent from the index without resending already answered content. A path excluded by current ignore rules must be reported unreviewed without sending its content. With no model findings, the worktree run exits 0; the history run exits 1 when an ignored historical path remains unreviewed. CLI output and the ledger retain paths and answers, not file content.', { input: { repository: 'first commit adds kept.txt, removed.txt and old.pem; second commit ignores *.pem and removes removed.txt and old.pem from the index and the working tree', fixtureRule: 'every Noul is 0.02, so the model reports no findings', order: 'the worktree run is first; the history run reuses the same output ledger' }, implementationExcerpt: excerpt('public_release_review', ['list_history']), runs, ignoredCanarySentOrStored: leaked },
         !leaked && same(runs.worktree.sentPaths, ['.gitignore', 'kept.txt']) && same(runs.history.sentPaths, ['removed.txt']) && same(runs.history.sentStateFields, ['content', 'lines', 'path'])
         && same(runs.history.ignoredPathsInHistory, ['old.pem']) && same(runs.worktree.ignoredPathsInHistory, []) && runs.worktree.result.exit === 0 && runs.history.result.exit === 1);
     });

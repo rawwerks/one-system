@@ -18,6 +18,7 @@ BUNDLE_OUT ?= .build/downloads
 
 .PHONY: verify verify-help check-verification check-scenarios check-laya-startup help setup-dev check-dev doctor check-hygiene check-secrets check-hono-locks update-examples-lock setup setup-laya setup-laya-mlx setup-hono setup-examples check-example-env build build-hono build-conformance check check-hono check-worker check-worker-local check-conformance check-examples check-review check-laya true-up-build true-up-check true-up-impact serve serve-hono serve-laya
 .PHONY: package-go check-go-packages check-go-static check-push check-commit setup-hooks
+.PHONY: setup-verification
 
 help:
 	@printf '%s\n' \
@@ -34,6 +35,7 @@ help:
 	  'Hono local service: make serve-hono (same ONE_SYSTEM_* and backend credential variables).' \
 	  'Shared HTTP conformance: make check-conformance (isolated servers, synthetic upstreams, no paid inference).' \
 	  'Example dependencies: make setup-examples (isolated SDK/YAML environment; no Torch; EXAMPLE_VENV overrides its path).' \
+	  'Verifier dependency: make setup-verification (official JavaScript SDK, isolated from gateway runtime).' \
 	  'Checks use the prepared example environment without installing packages.' \
 	  'Public example checks: make check-examples. Private corpus binding: SKILLS_LIBRARY_PATH; never publish its value.' \
 	  'Worker deployment check: make check-worker (bundle only; no account required).' \
@@ -76,7 +78,7 @@ help:
 setup:
 	$(GO) mod download
 
-setup-dev: setup setup-hono setup-examples
+setup-dev: setup setup-hono setup-examples setup-verification
 
 # The optional inference adapter is separate from gateway development.
 setup-laya:
@@ -95,6 +97,11 @@ setup-hono:
 check-hono-locks:
 	$(BUN) hono/scripts/check-locks.mjs
 	$(BUN) test hono/scripts/check-locks.test.mjs
+
+setup-verification:
+	$(BUN) hono/scripts/check-locks.mjs verification
+	$(BUN) install --cwd verification --frozen-lockfile --no-save --minimum-release-age 259200
+	$(BUN) hono/scripts/check-locks.mjs verification
 
 setup-examples:
 	mkdir -p .build
@@ -216,5 +223,6 @@ verify-help:
 	@$(NODE) verification/verify.ts --help
 
 check-verification:
+	$(BUN) hono/scripts/check-locks.mjs verification
 	$(NODE) hono/node_modules/typescript/bin/tsc -p verification/tsconfig.json
 	$(NODE) --test verification/*.test.ts

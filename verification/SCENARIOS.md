@@ -18,11 +18,20 @@ assertions, expectations, or a second test runner.
 Committed ignore rules must protect private/generated paths while keeping source,
 templates and canonical locks trackable. Templates contain blank credentials.
 Every registry artifact must satisfy the 72-hour release-age policy, including
-timezone offsets, missing timestamps and the exact boundary. Installation must
-stop before package synchronization when age validation fails. Doctor failures
-must explain the missing prerequisite without tracebacks. Secret scanning must
-exclude escaping symlinks, include staged changes and history, redact findings,
-and fail when the scanner is unavailable or detects a secret. Indexed gitlinks
+timezone offsets, missing timestamps and the exact boundary. The age validator
+returns a list of policy failures: an empty list accepts, a nonempty list rejects;
+normal function return does not itself mean acceptance. A naive reference clock
+raises `ValueError`, and only the exact `{"virtual":"."}` project source is exempt.
+Installation must stop before package synchronization when age validation fails.
+The setup fixture proves that Make delegates interpreter selection to `uv` rather
+than invoking its `PYTHON` command variable. It observes the locked sync command
+through controlled uv, not an actual package installation or the interpreter
+installation selected by uv. Doctor failures must explain the missing prerequisite
+without tracebacks. Secret scanning must exclude internal symlinks, include staged
+changes and history after admissibility preflight, redact findings, and stop at
+the first nonzero scanner exit. A missing scanner fails before scanning. Controlled
+scanner fixtures establish orchestration and redaction, not real secret detection.
+An alias for the repository root is allowed. Indexed gitlinks
 must resolve to initialized repositories at their recorded commits. Child and
 nested submodules contribute tracked and nonignored sources plus their staged
 changes and history; ignored private files must never be opened or enumerated.
@@ -35,6 +44,11 @@ fail preflight before any source copy or scanner invocation.
 <!-- true-up:anchor id=examples -->
 Skill suggestions use native System One questions through the SDK, preserve the
 whole candidate roster, and apply the documented gate/verification thresholds.
+The first gate is the mean of the three request signals. Once the maximum
+shortlist fit reaches the inclusive 0.30 threshold, the returned skill is the
+second native Choice winner, not necessarily the maximum-fit candidate. An
+invalid answer is a CLI error with exit 2 and empty stdout; a valid abstention
+is exit 0 with `no suggestion` on stdout.
 CLI consumers require an explicit `--model`, or both `--laya-model` and
 `--jev-model` for the ensemble example. A registry's configured name selects
 automatic routing and a configured backend ID selects direct dispatch. Neither
@@ -45,8 +59,15 @@ invalid paths, duplicate identities and symlinks cannot expose private content.
 Review export is restricted to declared public sources. Backend admission requires
 fresh candidate, rubric, endpoint and request/response evidence; tampering,
 missing records, invalid native outputs or changed identities cannot produce
-readiness. Uncertain semantic evidence holds, and inference-boundary violations
-reject admission. Recorded usage and native probabilities remain intact.
+readiness. Inference-boundary violations reject admission. A compliant review
+whose selected Choice label has probability below 0.80 holds rather than becoming
+ready; Choice confidence is not that threshold. Review rejection or uncertainty
+can stop admission before probing, but readiness requires complete matching probes.
+Probe comparisons allow the configured numeric tolerance (default `1e-6`) for
+confidence and probabilities; usage must match exactly. Recorded evidence remains intact.
+Direct typed-answer and numeric-parity validation scenarios exercise those
+subroutines only, not full admission. A native Choice may select either option
+in an exact maximum-probability tie; criteria order must not override it.
 Public-release review lists files through Git, so ignored files are never opened
 or sent, including a file tracked despite the ignore rules, which is reported
 unreviewed. Symbolic links are reported unreviewed rather than followed. Each
@@ -84,10 +105,12 @@ stage ordering, answer preservation and failure behavior, not model quality.
 ## Worker transport
 
 <!-- true-up:anchor id=worker -->
-The actual built Worker must enforce authentication and expose the configured
-model/capability catalogue. The required registry name identifies its automatic
-route and appears first in model discovery, followed by sorted backend IDs; it
-must be a nonempty string matching `^[A-Za-z0-9_-]+$` without a backend-ID collision.
+The actual built Worker must enforce authentication. Catalogue requests without
+the correct bearer credential return 401 without disclosing models or capabilities.
+Authorized requests expose the configured model/capability catalogue. The required
+registry name identifies its automatic route and appears first in authorized model
+discovery, followed by sorted backend IDs; it must be a nonempty string matching
+`^[A-Za-z0-9_-]+$` without a backend-ID collision.
 There is no implicit automatic alias. It must reject invalid routes and unsupported requests
 before invoking a backend. Forwarded native JSON must preserve precision and
 special object keys. Successful response bytes remain unchanged, and upstream
@@ -106,8 +129,9 @@ are incomplete evidence, never a passing inference test.
 <!-- true-up:end id=laya -->
 
 `make verify` collects repository, SDK consumer and Worker scenarios and sends
-batches of at most eight observations to the declared System One questions. Each
-scenario gets its own typed judgment; batching shares context, not verdicts. `make check-scenarios`
+each application scenario as its own state to the declared System One questions.
+Questions about that case share context; unrelated executions do not. At most eight
+evaluation requests run concurrently. `make check-scenarios`
 collects the same observations offline; it does not claim semantic verification.
 Each run keeps private evidence under `.build/`. There are no automatic installs.
 

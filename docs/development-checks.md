@@ -12,6 +12,7 @@ For the full gateway development environment, run `make setup-dev`, then `make d
 make setup build
 make setup-hono build-hono
 make setup-examples
+make setup-verification
 make check
 make check-scenarios
 make check-conformance
@@ -29,7 +30,13 @@ The conformance runner verifies that Hono is running under real Node 24. `make c
 
 Example installation uses the committed, hashed [`examples/requirements.lock`](../examples/requirements.lock). Regenerate it deliberately with `make update-examples-lock` when updating the inline dependency metadata, then review and test the resulting versions. A copied virtual environment is not a portable substitute for setup.
 
-`hono/package-lock.json` is authoritative. Local setup uses Bun with the frozen lockfile and a three-day minimum release age; a migration-generated `bun.lock` is ignored. CI installs with `npm ci`.
+`hono/package-lock.json` and `verification/package-lock.json` are authoritative for
+their separate packages. Local setup uses Bun with frozen locks and a three-day
+minimum release age; migration-generated `bun.lock` files are ignored. Hono's
+hosted setup uses `npm ci`; verifier setup uses `make setup-verification` in both
+environments. The official JavaScript SDK stays out of gateway runtime dependencies.
+`make check-verification` checks verifier lock consistency, TypeScript types, and
+the existing verification tests; it does not install dependencies or call inference.
 
 ## System One reviews System One
 

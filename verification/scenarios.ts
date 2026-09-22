@@ -38,10 +38,6 @@ export function semanticRows(rows: Scenario[]): Json[] {
   return rows.map(({ id, contract, observed }) => ({ id, contract, observed }));
 }
 
-export function batches<T>(items: T[], size = 8): T[][] {
-  if (!Number.isSafeInteger(size) || size < 1) throw new Error('invalid_batch_size');
-  return Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size));
-}
 
 export function scenarioQuestions(template: Record<string, ChoiceQuestion>, rows: Json[]): Record<string, ChoiceQuestion> {
   const questions: Record<string, ChoiceQuestion> = {};

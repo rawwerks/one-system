@@ -85,6 +85,7 @@
   "age": [
     {
       "id": "exact-boundary",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -106,6 +107,7 @@
     },
     {
       "id": "inside-boundary",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -127,6 +129,7 @@
     },
     {
       "id": "offset-instant",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -148,6 +151,7 @@
     },
     {
       "id": "every-artifact",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -175,6 +179,7 @@
     },
     {
       "id": "null-time",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -196,6 +201,7 @@
     },
     {
       "id": "invalid-time",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -217,6 +223,7 @@
     },
     {
       "id": "naive-time",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -238,6 +245,7 @@
     },
     {
       "id": "numeric-time",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -259,6 +267,7 @@
     },
     {
       "id": "missing-time",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -276,6 +285,7 @@
     },
     {
       "id": "no-artifacts",
+      "scope": "registry-artifacts",
       "lock": {
         "package": [
           {
@@ -293,6 +303,7 @@
     },
     {
       "id": "virtual-project",
+      "scope": "virtual-project",
       "lock": {
         "package": [
           {
@@ -308,6 +319,7 @@
     },
     {
       "id": "unsupported-source",
+      "scope": "source",
       "lock": {
         "package": [
           {
@@ -323,12 +335,14 @@
     },
     {
       "id": "no-packages",
+      "scope": "package-list",
       "lock": {},
       "now": "2026-09-20T18:00:00+00:00",
       "errors": 1
     },
     {
       "id": "empty-packages",
+      "scope": "package-list",
       "lock": {
         "package": []
       },
@@ -337,6 +351,7 @@
     },
     {
       "id": "invalid-package",
+      "scope": "package-entry",
       "lock": {
         "package": [
           null
@@ -347,6 +362,7 @@
     },
     {
       "id": "naive-clock",
+      "scope": "clock",
       "lock": {
         "package": [
           {

@@ -346,18 +346,21 @@ def make_client(
 
 def _probability(value: Any) -> float:
     if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
-        raise AnswerError("The model returned an invalid probability; no suggestion was produced.")
+        raise AnswerError("Invalid model response: probability must be finite and between zero and one.")
     return float(value)
 
 
 def _answers(client: Any, state: dict[str, str], questions: dict[str, Any], model: str) -> Mapping[str, Any]:
+    sdk = _sdk()
     try:
-        response = client.system_one(state=state, questions=questions, model=model, retry=_sdk().RetryPolicy(max_retries=0))
+        response = client.system_one(state=state, questions=questions, model=model, retry=sdk.RetryPolicy(max_retries=0))
+    except sdk.TypeSafeAPIResponseValidationError:
+        raise AnswerError("Invalid model response: SDK response validation failed.") from None
     except Exception:
         raise InferenceError("TypeSafe inference failed; check gateway availability, authentication, and backend capacity.") from None
     answers = getattr(response, "answers", None)
     if not isinstance(answers, Mapping) or set(answers) != set(questions):
-        raise AnswerError("The model returned missing or unexpected answers; no suggestion was produced.")
+        raise AnswerError("Invalid model response: missing or unexpected answers.")
     return answers
 
 
@@ -368,19 +371,19 @@ def _choice(answer: Any, ids: set[str]) -> tuple[str, dict[str, float]]:
         getattr(answer, "type", None) != "choice" or not isinstance(winner, str) or
         winner not in ids or not isinstance(probabilities, Mapping) or set(probabilities) != ids
     ):
-        raise AnswerError("The model returned an invalid skill Choice; no suggestion was produced.")
+        raise AnswerError("Invalid model response: malformed skill Choice.")
     _probability(getattr(answer, "confidence", None))
     values = {name: _probability(value) for name, value in probabilities.items()}
     if not math.isclose(sum(values.values()), 1.0, rel_tol=0.0, abs_tol=0.01):
-        raise AnswerError("The model returned an invalid Choice distribution; no suggestion was produced.")
+        raise AnswerError("Invalid model response: Choice probabilities do not sum to one.")
     if values[winner] < max(values.values()):
-        raise AnswerError("The model returned an inconsistent Choice winner; no suggestion was produced.")
+        raise AnswerError("Invalid model response: selected Choice does not have maximum probability.")
     return winner, values
 
 
 def _noul(answer: Any) -> float:
     if getattr(answer, "type", None) != "noul":
-        raise AnswerError("The model returned a non-Noul answer to a gate; no suggestion was produced.")
+        raise AnswerError("Invalid model response: a gate answer is not a Noul.")
     return _probability(getattr(answer, "noul", None))
 
 

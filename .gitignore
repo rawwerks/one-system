@@ -49,6 +49,7 @@ coverage/
 /.build/
 /.true-up/
 node_modules
+/verification/bun.lock
 .cache/
 .direnv/
 *.log

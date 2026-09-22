@@ -80,6 +80,7 @@ make true-up-check
 | Both gateways and SDK integration | All three setups above | `make check-conformance` |
 | Worker packaging and local runtime | Hono setup above | `make check-worker check-worker-local` |
 | System One consumer scenarios | Node 24 and example environment | `make check-examples` |
+| System One verifier | `make setup-dev` (includes `setup-verification`) | `make check-verification`, then authenticated `make verify` |
 | Optional Laya CPU adapter startup | Node 24 and `make setup-laya` | `make check-laya-startup` |
 | Optional Apple Silicon MLX adapter startup | Node 24 and `make setup-laya-mlx` | `LAYA_RUNTIME=mlx make check-laya-startup` |
 | Full verification including Laya inference | Full developer setup, adapter runtime, checkpoint and evaluator credentials | `make check-laya` |
@@ -110,15 +111,20 @@ Ordinary push/PR runs and local setup retain the cooldown. It changes package
 eligibility only; all adapter startup/runtime checks still run.
 
 Commit dependency declarations and their canonical lockfiles: `go.mod`/`go.sum`,
-`hono/package.json`/`hono/package-lock.json`, and `pyproject.toml`/`uv.lock`.
+`hono/package.json`/`hono/package-lock.json`,
+`verification/package.json`/`verification/package-lock.json`, and `pyproject.toml`/`uv.lock`.
 The SDK example's inline dependency metadata and `examples/requirements.lock`
 are versioned together. Setup installs that exact hash-checked dependency lock;
 `make update-examples-lock` deliberately regenerates it when changing the example
 dependencies. Review the resulting versions and hashes before committing. Bun imports the
-npm lock locally; `hono/bun.lock` is disposable. `make setup-hono` checks for
-stale imported locks before installing and `make check-hono-locks` verifies the
-guard. If it reports drift, preserve the local lock for inspection, move it out
-of `hono/`, and rerun setup to import the reviewed npm lock. Do not commit generated schema
+npm lock locally; `hono/bun.lock` and `verification/bun.lock` are disposable.
+`make setup-hono` and `make setup-verification` check for stale imported locks
+before installing with the frozen lock and three-day release-age policy.
+`make check-hono-locks` exercises the shared guard; `make check-verification`
+also checks the verifier's locks. If either setup reports drift, preserve its local
+lock for inspection, move it out of that package directory, and rerun setup to
+import the reviewed npm lock. The official JavaScript SDK is a verifier-local
+dependency, not part of either gateway runtime. Do not commit generated schema
 modules, compiled bundles, package trees, virtual environments, or downloaded
 weights. The build regenerates Hono schema modules from the pinned OpenAPI file.
 

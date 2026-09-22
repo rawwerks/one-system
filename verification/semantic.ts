@@ -1,5 +1,7 @@
 /** System One supplies atomic judgments; ordinary code owns their composition. */
-export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+import { APIError, APITimeoutError, TypeSafeClient, type JsonValue, type SystemOneRequest } from '@typesafe-ai/sdk';
+
+export type Json = JsonValue;
 export type ChoiceQuestion = {
   type: 'choice';
   instructions: string | Json[] | { [key: string]: Json };
@@ -24,7 +26,8 @@ export const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 120_000;
 const outcomes = ['supports', 'contradicts', 'insufficient_context'];
 
-function fail(message: string): never { throw new Error(message); }
+class EvaluationError extends Error {}
+function fail(message: string): never { throw new EvaluationError(message); }
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -90,43 +93,57 @@ export async function evaluate(options: EvaluationOptions) {
         || Object.keys(question.criteria).length > 255
         || !Object.values(question.criteria).every(value => value === null || content(value))) fail('invalid_request');
   }
-  const requestBody = serialize({ model, state, questions });
+  let requestBody = serialize({ model, state, questions });
   // Return the exact serialized snapshot, even if the caller later mutates its input.
   const request = JSON.parse(requestBody) as { model: string; state: Json; questions: Record<string, ChoiceQuestion> };
   const record = (wire: WireEvidence) => {
     try { options.onWire?.(wire); } catch { fail('evidence_write_failed'); }
   };
-  record({ requestBody });
   const signal = AbortSignal.timeout(timeoutMs);
-  let responseBody: string;
-  let responseStatus: number;
+  let responseBody = '';
+  let transportFailure: EvaluationError | undefined;
+  const client = new TypeSafeClient({
+    apiKey, baseURL: url.origin, timeout: timeoutMs, retry: { maxRetries: 0 }, logLevel: 'off',
+    // Capture and bound the wire before the SDK buffers or interprets it.
+    fetch: async (input, init) => {
+      try {
+        if (typeof init?.body !== 'string') fail('invalid_request');
+        requestBody = init.body;
+        if (Buffer.byteLength(requestBody, 'utf8') > MAX_BODY_BYTES) fail('request_too_large');
+        record({ requestBody });
+        const response = await fetch(input, { ...init, redirect: 'error' });
+        if (!response.body) fail('invalid_response');
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_BODY_BYTES) { await reader.cancel(); fail('response_too_large'); }
+          chunks.push(value);
+        }
+        const bytes = Buffer.concat(chunks, size);
+        try { responseBody = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+        catch { fail('invalid_response_encoding'); }
+        record({ requestBody, responseBody, responseStatus: response.status });
+        return new Response(bytes, { status: response.status, headers: response.headers });
+      } catch (error) {
+        if (error instanceof EvaluationError) transportFailure = error;
+        throw error;
+      }
+    },
+  });
   try {
-    const response = await fetch(url, {
-      method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: requestBody, redirect: 'error', signal,
-    });
-    responseStatus = response.status;
-    if (!response.body) fail('invalid_response');
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BODY_BYTES) { await reader.cancel(); fail('response_too_large'); }
-      chunks.push(value);
-    }
-    try { responseBody = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)); }
-    catch { fail('invalid_response_encoding'); }
+    // Runtime checks above narrow the verifier's JSON input to the official request.
+    // Raw mode preserves strict JSON/BOM handling instead of the SDK's lenient parser.
+    await client.systemOne(request as SystemOneRequest, { signal }).asResponse();
   } catch (error) {
-    if (signal.aborted) fail('evaluation_timeout');
-    if (error instanceof Error && ['invalid_response', 'response_too_large', 'invalid_response_encoding'].includes(error.message)) throw error;
+    if (transportFailure) throw transportFailure;
+    if (signal.aborted || error instanceof APITimeoutError) fail('evaluation_timeout');
+    if (error instanceof APIError) fail('evaluation_http_error');
     fail('evaluation_transport_error');
   }
-  // Persist exact bounded bytes before any HTTP, JSON, model or answer validation.
-  record({ requestBody, responseBody, responseStatus });
-  if (responseStatus < 200 || responseStatus >= 300) fail('evaluation_http_error');
   let response: unknown;
   try { response = JSON.parse(responseBody); } catch { fail('invalid_response_json'); }
   validateResponse(response, request.questions, expectedModel);

@@ -160,6 +160,8 @@ responses. Optional `--output` must name a new directory; it retains stage
 request/response bodies, timing/model provenance, and the final result, but no
 headers or credentials. Omit it to print only the final response. Failed or
 invalid stages stop the example without retries, fallback, or a partial answer.
+An unsuccessful output directory contains an incomplete report and whatever
+stage bodies were available before failure; it never contains a final response.
 
 ## Build your own configuration
 

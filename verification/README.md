@@ -1,8 +1,10 @@
 # One System verifies One System
 
 Run `make verify` after [developer setup](../CONTRIBUTING.md). It uses Node 24 and
-the existing toolchains and adds no package dependencies. Set `TYPESAFE_API_KEY`
-for the hosted evaluator through your ignored environment file or shell. The
+the official `@typesafe-ai/sdk` pinned in this directory. `make setup-dev` includes
+`make setup-verification`, which installs that dependency independently of the
+gateways. Set `TYPESAFE_API_KEY` for the hosted evaluator through your ignored
+environment file or shell. The
 command starts a temporary authenticated One System gateway with
 `examples/jev-lint.backends.json` (automatic route `jev-lint`) and explicitly
 requests backend ID `hosted`, the pinned `jev-1.13.0` evaluator, through its
@@ -14,6 +16,21 @@ conformance, then evaluates the declared semantic obligations. True-up resolves
 the named source facts from each obligation's declared dependencies. Requests
 contain only the explicitly exportable documentation/code chunks and synthetic
 test observations. Review these sources before sending them to a hosted model.
+
+The SDK constructs and authenticates System One requests. The verifier disables
+SDK retries and logging and rejects redirects. A custom fetch hook bounds bodies
+and records exact UTF-8 evidence before the SDK interprets HTTP errors. Raw-response
+mode retains strict JSON parsing (including BOM rejection); answer validation,
+model identity checks, sanitized failures, and verdict composition remain verifier
+policy. This integration does not change or resolve semantic findings.
+
+Exported source files and individual HTTP request/response bodies retain their
+2 MiB limits. Local scenario aggregate files have a separate 16 MiB bound; they
+are not submitted as one model state. Size failures stop verification rather than
+silently dropping observations or truncating evidence.
+Fixture snapshots describe synthetic inputs, not content observed on outgoing
+requests. They omit Git administrative metadata; actual HTTP and CLI captures
+establish what the application sent, returned or refused.
 
 For manual review consumers, pass `--model jev-lint` when targeting that registry
 automatically, or `--model hosted` for direct dispatch. Other registries advertise
@@ -55,6 +72,8 @@ partial, oversized or invalid UTF-8 replies retain the request only. Real
 credentials and their authorization headers are excluded. Scenarios may record
 explicitly synthetic credentials to verify authentication and forwarding. Keep these artifacts
 private until reviewed; they can contain repository source and model output.
+Repository and scratch roots are normalized before subprocess evidence is exported.
+This does not make raw process logs or local inputs safe to publish.
 
 The semantic scope is explicitly declared:
 
@@ -66,7 +85,8 @@ The semantic scope is explicitly declared:
 
 - `system.repository`, `system.examples`, and `system.worker`: execute the
   cross-language scenarios described in [SCENARIOS.md](SCENARIOS.md), then compare
-  actual outcomes with their contracts in batches of at most eight observations.
+  each actual outcome with its contract in an isolated state. At most eight
+  evaluation requests run concurrently; questions about the same case share state.
 - `system.laya`: optional real adapter verification with `--include-laya`; missing
   runtime or checkpoint leaves that profile incomplete.
 
