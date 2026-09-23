@@ -41,7 +41,11 @@ export class GenerationRejected extends CompositionError {
 export interface Checks<O> {
   /** Deterministic, runs first: parse and validate. Throw Rejected with a fixable reason. */
   readonly decode: (text: string) => O;
-  /** Optional semantic check on a decoded value, e.g. System One judgments. Throw Rejected. */
+  /**
+   * Optional semantic check on a decoded value, e.g. System One judgments. Call
+   * other components here, then throw Rejected from verify itself: a Rejected
+   * thrown inside a called component fails the whole run instead of retrying.
+   */
   readonly verify?: (value: O, scope: Scope) => Promise<void>;
 }
 
@@ -117,6 +121,8 @@ export interface AgentCliOptions {
  * agentCli('pi', ['-p']), agentCli('codex', ['exec']). Model choice, login and
  * subscription stay with the CLI. A zero exit does not make stdout an answer:
  * some CLIs print provider errors to stdout and exit 0, so decode must check it.
+ * Cancellation signals the CLI process itself; processes it starts (tools, MCP
+ * servers) stop only if the CLI passes the signal on.
  */
 export function agentCli(command: string, args: readonly string[] = [], options: AgentCliOptions = {}): Generate {
   const maxOutput = options.maxOutputBytes ?? 1024 * 1024;
@@ -134,25 +140,25 @@ export function agentCli(command: string, args: readonly string[] = [], options:
       killer = setTimeout(() => child.kill('SIGKILL'), 2000);
       killer.unref();
     };
-    const finish = (error: unknown, value?: string) => {
+    const finish = (outcome: { value: string } | { error: unknown }) => {
       if (settled) return;
       settled = true;
       signal.removeEventListener('abort', onAbort);
-      if (error) { stop(); reject(error); } else resolve(value!);
+      if ('error' in outcome) { stop(); reject(outcome.error); } else resolve(outcome.value);
     };
-    const onAbort = () => finish(signal.reason);
+    const onAbort = () => finish({ error: signal.reason });
     signal.addEventListener('abort', onAbort, { once: true });
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
-      if (stdoutBytes > maxOutput) return finish(new GeneratorFailed(`${command} output exceeded ${maxOutput} bytes`, stderr));
+      if (stdoutBytes > maxOutput) return finish({ error: new GeneratorFailed(`${command} output exceeded ${maxOutput} bytes`, stderr) });
       stdout.push(chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => { if (stderr.length < 64 * 1024) stderr += chunk.toString('utf8'); });
-    child.once('error', error => finish(new GeneratorFailed(`${command} could not start: ${(error as NodeJS.ErrnoException).code ?? error.message}`, stderr)));
+    child.once('error', error => finish({ error: new GeneratorFailed(`${command} could not start: ${(error as NodeJS.ErrnoException).code ?? error.message}`, stderr) }));
     child.once('close', (code, killedBy) => {
       if (killer) clearTimeout(killer);
-      if (code === 0) finish(null, Buffer.concat(stdout).toString('utf8'));
-      else finish(new GeneratorFailed(`${command} exited with ${code ?? killedBy}`, stderr));
+      if (code === 0) finish({ value: Buffer.concat(stdout).toString('utf8') });
+      else finish({ error: new GeneratorFailed(`${command} exited with ${code ?? killedBy}`, stderr) });
     });
     child.stdin.on('error', () => { /* a CLI may exit before reading all input; close reports it */ });
     child.stdin.end(renderPrompt(request));

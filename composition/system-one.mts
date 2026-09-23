@@ -11,16 +11,18 @@ export interface SystemOneResponse {
   usage: { input_tokens: number; output_tokens: number };
 }
 export interface Connection {
-  /** Gateway base URL, e.g. http://127.0.0.1:8090 */
+  /** Gateway base URL, e.g. http://127.0.0.1:8090 or https://host/prefix/ */
   readonly endpoint: string;
   readonly apiKey: string;
 }
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+/** Resolve an API path under the endpoint, keeping any base path such as /proxy/. */
+const at = (endpoint: string, path: string) => new URL(path, endpoint.endsWith('/') ? endpoint : `${endpoint}/`);
 
 /** One request, no retries. Only {model, state, questions} crosses the boundary. */
 export async function ask(connection: Connection, request: SystemOneRequest, signal?: AbortSignal): Promise<SystemOneResponse> {
-  const response = await fetch(new URL('/v1/systemone', connection.endpoint), {
+  const response = await fetch(at(connection.endpoint, 'v1/systemone'), {
     method: 'POST', redirect: 'error', signal,
     headers: { Authorization: `Bearer ${connection.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: request.model, state: request.state, questions: request.questions }),
@@ -61,13 +63,13 @@ export interface Capabilities {
  */
 export async function routeCapabilities(connection: Connection, model: string, signal?: AbortSignal): Promise<(Capabilities | null)[]> {
   const get = async (path: string) => {
-    const response = await fetch(new URL(path, connection.endpoint), {
+    const response = await fetch(at(connection.endpoint, path), {
       redirect: 'error', signal, headers: { Authorization: `Bearer ${connection.apiKey}` },
     });
     if (!response.ok) throw new CompositionError('system_one_failed', `${path} failed: http_${response.status}`);
     return response.json();
   };
-  const [{ models: catalogue }, { models: profiles }] = await Promise.all([get('/v1/models'), get('/v1/capabilities')]) as [
+  const [{ models: catalogue }, { models: profiles }] = await Promise.all([get('v1/models'), get('v1/capabilities')]) as [
     { models: { name: string }[] }, { models: { name: string; capabilities: Capabilities | null }[] }];
   const direct = profiles.find(profile => profile.name === model);
   if (direct) return [direct.capabilities];

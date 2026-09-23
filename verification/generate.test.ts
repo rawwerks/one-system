@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { agentCli, GenerationRejected, generateChecked, GeneratorFailed, parseJson, Rejected } from '../composition/generate.mts';
 import { questionAuthor, questionProblems, questionsSchema } from '../composition/questions.mts';
-import { run } from '../composition/runtime.mts';
+import { component, run } from '../composition/runtime.mts';
+import { ask } from '../composition/system-one.mts';
 import { openAIResponses } from '../examples/generators/openai-responses.mts';
 
 const agent = join(import.meta.dirname, 'fixtures/fake-agent.mjs');
+const temporary: string[] = [];
+after(() => { for (const dir of temporary) rmSync(dir, { recursive: true, force: true }); });
 function fakeAgent(replies: object[], maxOutputBytes?: number) {
   const dir = mkdtempSync(join(tmpdir(), 'fake-agent-'));
+  temporary.push(dir);
   writeFileSync(join(dir, 'replies.json'), JSON.stringify(replies));
   const generate = agentCli(process.execPath, [agent], { env: { ...process.env, FAKE_AGENT_DIR: dir }, maxOutputBytes });
   const stdin = () => readdirSync(dir).filter(name => name.startsWith('stdin-')).sort().map(name => readFileSync(join(dir, name), 'utf8'));
@@ -118,7 +122,7 @@ test('the OpenAI Responses example speaks the documented wire format', async () 
   await once(server, 'listening');
   const { port } = server.address() as { port: number };
   try {
-    const generate = openAIResponses({ apiKey: 'test-key', model: 'any-model', baseUrl: `http://127.0.0.1:${port}` });
+    const generate = openAIResponses({ apiKey: 'test-key', model: 'any-model', baseUrl: `http://127.0.0.1:${port}/v1` });
     const questions = await run(questionAuthor('questions', generate), 'Detect refund requests', { allow: [] });
     assert.deepEqual(questions, JSON.parse(valid));
     const [request] = seen;
@@ -136,4 +140,52 @@ test('the OpenAI Responses example speaks the documented wire format', async () 
     server.close();
     server.closeAllConnections();
   }
+});
+
+test('string-only backends do not count when the state will be structured', () => {
+  const noul = { q: { type: 'noul', instructions: 'x' } };
+  const stringOnly = { question_types: ['noul'], structured_state: false };
+  assert.deepEqual(questionProblems(noul, [stringOnly]), []);
+  assert.deepEqual(questionProblems(noul, [stringOnly], true), ['no backend on this route accepts structured (non-string) state']);
+  assert.deepEqual(questionProblems(noul, [stringOnly, { question_types: ['noul'] }], true), []);
+});
+
+test('an abort with a falsy reason still fails and stops the agent', async () => {
+  const cli = fakeAgent([{ sleep: 30_000 }]);
+  const controller = new AbortController();
+  const pending = cli.generate({ prompt: 'x', feedback: [] }, controller.signal);
+  setTimeout(() => controller.abort(0), 100);
+  await assert.rejects(pending, (reason: unknown) => reason === 0);
+  await new Promise(done => setTimeout(done, 300));
+  assert.equal(alive(cli.pids()[0]!), false);
+});
+
+test('verify retries only on a Rejected it throws itself, not one from a called component', async () => {
+  const judge = component<string, boolean>('judge', text => text === 'good');
+  const cli = fakeAgent([{ stdout: 'bad' }, { stdout: 'good' }]);
+  const checked = generateChecked('draft', cli.generate, {
+    decode: t => t,
+    verify: async (value, scope) => { if (!await scope.call(judge, value)) throw new Rejected('judged bad'); },
+  });
+  assert.equal(await run(checked, 'x', { allow: [judge] }), 'good');
+  const throwing = component<string, void>('throwing', () => { throw new Rejected('inside a component'); });
+  const failing = generateChecked('draft', fakeAgent([{ stdout: 'a' }, { stdout: 'b' }]).generate, {
+    decode: t => t, verify: async (value, scope) => scope.call(throwing, value),
+  });
+  await assert.rejects(run(failing, 'x', { allow: [throwing] }), Rejected);
+});
+
+test('a gateway endpoint with a base path keeps it', async () => {
+  const paths: string[] = [];
+  const server = createServer((req, res) => {
+    paths.push(req.url!);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ model: 'm', answers: { q: { type: 'noul', noul: 1 } }, usage: { input_tokens: 1, output_tokens: 1 } }));
+  }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address() as { port: number };
+  try {
+    await ask({ endpoint: `http://127.0.0.1:${port}/proxy`, apiKey: 'k' }, { model: 'm', state: 's', questions: { q: { type: 'noul', instructions: 'x' } } });
+    assert.deepEqual(paths, ['/proxy/v1/systemone']);
+  } finally { server.close(); server.closeAllConnections(); }
 });

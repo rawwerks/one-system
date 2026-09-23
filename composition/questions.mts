@@ -55,11 +55,14 @@ function limitProblems(questions: Questions, limits: Capabilities): string[] {
 }
 
 /**
- * Every problem that would make the gateway reject these questions for a route,
+ * Problems in the questions that would make the gateway reject them for a route,
  * or [] when they are acceptable. `route` comes from routeCapabilities: the
  * request passes when any backend accepts it, and an undeclared backend is unknown.
+ * Pass `structuredState: true` when the state you will send is not a string, so
+ * backends declared `structured_state: false` are excluded. The gateway's own
+ * selector limits on automatic routes are not modelled here.
  */
-export function questionProblems(value: unknown, route: readonly (Capabilities | null)[] = [null]): string[] {
+export function questionProblems(value: unknown, route: readonly (Capabilities | null)[] = [null], structuredState = false): string[] {
   // An unknown type would otherwise surface as every branch's oneOf mismatch.
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const unknown = Object.entries(value).filter(([, question]) => !['choice', 'noul', 'score'].includes((question as { type?: unknown })?.type as string));
@@ -74,6 +77,8 @@ export function questionProblems(value: unknown, route: readonly (Capabilities |
     return specific.length ? specific : lines;
   }
   const questions = value as Questions;
+  route = route.filter(limits => !(structuredState && limits?.structured_state === false));
+  if (!route.length) return ['no backend on this route accepts structured (non-string) state'];
   if (route.some(limits => limits === null)) return [];
   const perBackend = route.map(limits => limitProblems(questions, limits!));
   if (perBackend.some(problems => problems.length === 0)) return [];
@@ -101,6 +106,8 @@ export interface QuestionAuthorOptions {
   /** From routeCapabilities(connection, model). Omit when the destination is unknown. */
   readonly route?: readonly (Capabilities | null)[];
   readonly attempts?: number;
+  /** True when the state you will send with these questions is not a string. */
+  readonly structuredState?: boolean;
   /** Optional semantic review, e.g. System One judging question quality. Throw Rejected. */
   readonly verify?: (questions: Questions, scope: Scope) => Promise<void>;
 }
@@ -112,7 +119,7 @@ export function questionAuthor(name: string, generate: Generate, options: Questi
   return generateChecked<Questions>(name, generate, {
     decode(text) {
       const value = parseJson(text);
-      const problems = questionProblems(value, route);
+      const problems = questionProblems(value, route, options.structuredState);
       if (problems.length) throw new Rejected(problems.join('; '));
       return value as Questions;
     },

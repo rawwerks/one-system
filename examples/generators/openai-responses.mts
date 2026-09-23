@@ -11,6 +11,7 @@ export interface ResponsesOptions {
   readonly apiKey: string;
   /** Your choice; this example deliberately has no default model. */
   readonly model: string;
+  /** Defaults to https://api.openai.com/v1/; a proxy or compatible base path is kept. */
   readonly baseUrl?: string;
   readonly maxOutputTokens?: number;
 }
@@ -38,15 +39,18 @@ export function openAIResponses(options: ResponsesOptions): Generate {
       // questions. Send the schema as guidance; decode validates the result anyway.
       body.text = { format: { type: 'json_schema', name: 'answer', schema: request.responseSchema, strict: false } };
     }
-    const response = await fetch(new URL('/v1/responses', options.baseUrl ?? 'https://api.openai.com'), {
+    const base = options.baseUrl ?? 'https://api.openai.com/v1/';
+    const response = await fetch(new URL('responses', base.endsWith('/') ? base : `${base}/`), {
       method: 'POST', signal, redirect: 'error',
       headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = await response.json() as {
+    const text = await response.text();
+    let data: {
       status?: string; error?: { message?: string } | null;
       output?: { type: string; content?: { type: string; text?: string; refusal?: string }[] }[];
-    };
+    } = {};
+    try { data = JSON.parse(text); } catch { if (response.ok) throw new Error('OpenAI Responses API returned a non-JSON body'); }
     if (!response.ok) throw new Error(`OpenAI Responses API failed: HTTP ${response.status} ${data.error?.message ?? ''}`.trim());
     if (data.status && data.status !== 'completed') throw new Error(`OpenAI response is ${data.status}`);
     const content = (data.output ?? []).filter(item => item.type === 'message').flatMap(item => item.content ?? []);
