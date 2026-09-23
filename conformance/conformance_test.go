@@ -337,7 +337,7 @@ func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMes
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	g := &gateway{
 		url:       "http://" + addr,
-		client:    &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		client:    &http.Client{Transport: transport, Timeout: requestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		transport: transport,
 		command:   exec.Command(runtime.command, runtime.args...), done: make(chan struct{}),
 	}
@@ -382,10 +382,18 @@ func launch(t *testing.T, runtime runtimeSpec, config any, questions json.RawMes
 	return g
 }
 
+// Generous bounds for a slow host (the gate runs in a fresh checkout that also
+// installs dependencies). They only cap waiting: no assertion depends on
+// either deadline expiring, and a healthy gateway answers in milliseconds.
+const (
+	readinessTimeout = 30 * time.Second
+	requestTimeout   = 20 * time.Second
+)
+
 func start(t *testing.T, runtime runtimeSpec, config any, questions json.RawMessage, environment ...string) *gateway {
 	t.Helper()
 	g := launch(t, runtime, config, questions, environment...)
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(readinessTimeout)
 	for time.Now().Before(deadline) {
 		select {
 		case <-g.done:
@@ -404,7 +412,7 @@ func start(t *testing.T, runtime runtimeSpec, config any, questions json.RawMess
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("gateway was not HTTP-ready within 8s\n%s", g.log.String())
+	t.Fatalf("gateway was not HTTP-ready within %s\n%s", readinessTimeout, g.log.String())
 	return nil
 }
 
