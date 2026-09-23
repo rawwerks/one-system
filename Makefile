@@ -149,8 +149,8 @@ build-conformance:
 # The one gate. .githooks/pre-push and the hosted workflow run exactly this;
 # the component targets below are for faster feedback while developing.
 check: check-verification check-go-static check-hono check-conformance check-scenarios check-worker true-up-check check-secrets
-# The gate always drives both implementations, whatever the caller's environment says.
-check: ONE_SYSTEM_RUNTIMES = go,hono
+# The gate always drives both implementations, whatever the environment or command line says.
+check: override ONE_SYSTEM_RUNTIMES = go,hono
 
 check-go:
 	$(GO) test ./...

@@ -12,11 +12,17 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const base = process.env.BASE || 'HEAD';
 const questionsPath = resolve(root, process.env.QUESTIONS || 'examples/agent-review.questions.json');
 
+// Only tracked or staged paths are ever sent, including under FILES: never
+// untracked or ignored files such as .env. -z keeps non-ASCII names unquoted.
 function changedFiles(): string[] {
-  if (process.env.FILES) return process.env.FILES.split(/\s+/).filter(Boolean);
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
-  // Tracked edits against BASE plus staged new files; never untracked or ignored paths.
-  return [...new Set([...git('diff', '--name-only', '--diff-filter=d', base), ...git('diff', '--name-only', '--cached', '--diff-filter=A')])].sort();
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
+  if (process.env.FILES) {
+    const requested = process.env.FILES.split(/\s+/).filter(Boolean);
+    const tracked = new Set(git('ls-files', '-z', '--cached', '--', ...requested));
+    for (const path of requested.filter(path => !tracked.has(path))) console.error(`review: skipping ${path} (not a tracked file)`);
+    return requested.filter(path => tracked.has(path));
+  }
+  return [...new Set([...git('diff', '-z', '--name-only', '--diff-filter=d', base), ...git('diff', '-z', '--name-only', '--cached', '--diff-filter=A')])].sort();
 }
 
 async function unusedPort(): Promise<number> {
