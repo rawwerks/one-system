@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, openSync, closeSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Json } from './semantic.ts';
+import type { Json } from './scenarios.ts';
 import type { Scenario } from './scenarios.ts';
 import { collectPersistenceWorker } from './persistence-worker.ts';
 

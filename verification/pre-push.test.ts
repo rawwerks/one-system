@@ -210,17 +210,17 @@ test('another worktree whose directory is briefly missing keeps its registration
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('without an override the suite is check-push, or check-dev on a branch that predates it', async () => {
+test('without an override the suite is check, or check-push on a revision that predates the single gate', async () => {
   const { dir, repo, env, runs } = await fixture('@true');
   try {
     const rules = (names: string[]) => names.map(name => `${name}:\n\t@echo ${name} >> "$(RUNS)"\n`).join('');
     const { ONE_SYSTEM_PRE_PUSH_TARGETS: _, ...defaults } = env;
-    await writeFile(join(repo, 'Makefile'), rules(['setup-dev', 'check-dev']));
-    await git(repo, 'commit', '--quiet', '-am', 'before the gate');
+    await writeFile(join(repo, 'Makefile'), rules(['setup-dev', 'check', 'check-push']));
+    await git(repo, 'commit', '--quiet', '-am', 'before the single gate');
     assert.equal((await push(repo, defaults, [`refs/heads/main ${await head(repo)} refs/heads/main ${zero}`])).code, 0);
-    await writeFile(join(repo, 'Makefile'), rules(['setup-dev', 'check-dev', 'check-push']));
-    await git(repo, 'commit', '--quiet', '-am', 'with the gate');
+    await writeFile(join(repo, 'Makefile'), rules(['setup-dev', 'check']));
+    await git(repo, 'commit', '--quiet', '-am', 'with the single gate');
     assert.equal((await push(repo, defaults, [`refs/heads/main ${await head(repo)} refs/heads/main ${zero}`])).code, 0);
-    assert.deepEqual(await runs(), ['setup-dev', 'check-dev', 'setup-dev', 'check-push']);
+    assert.deepEqual(await runs(), ['setup-dev', 'check-push', 'setup-dev', 'check']);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

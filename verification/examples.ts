@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, symlinkSync, copyFileSync, renameSync, lstatSync, readlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Json } from './semantic.ts';
+import type { Json } from './scenarios.ts';
 
 type ObjectValue = { [key: string]: any };
 type Run = { exit: number; stdout: string; stderr: string };

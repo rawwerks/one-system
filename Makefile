@@ -8,24 +8,27 @@ JS_RUN ?= $(BUN) run --cwd hono
 # compatibility binary named node ahead of the real runtime on PATH.
 NODE ?= $(shell command -v mise >/dev/null 2>&1 && mise which node 2>/dev/null || command -v node)
 TRUE_UP ?= true-up
+ONE_SYSTEM_RUNTIMES ?=
 EXAMPLE_VENV ?= .build/example-venv
 PROFILE ?= all
 BUNDLE_OUT ?= .build/downloads
 
 # These checks regenerate and consume the same Hono bundles. Keep this aggregate
 # ordered even under make -j so workerd cannot read a half-written bundle.
-.NOTPARALLEL: check-dev check-push verify
+.NOTPARALLEL: check
 
-.PHONY: verify verify-help check-verification check-scenarios check-laya-startup help setup-dev check-dev doctor check-hygiene check-secrets check-hono-locks update-examples-lock setup setup-laya setup-laya-mlx setup-hono setup-examples check-example-env build build-hono build-conformance check check-hono check-worker check-worker-local check-conformance check-examples check-review check-laya true-up-build true-up-check true-up-impact serve serve-hono serve-laya
-.PHONY: package-go check-go-packages check-go-static check-push check-commit setup-hooks
-.PHONY: setup-verification
+.PHONY: help setup setup-dev setup-hono setup-examples setup-laya setup-laya-mlx setup-hooks update-examples-lock doctor
+.PHONY: build build-hono build-conformance package-go check-go-packages serve serve-hono serve-laya review
+.PHONY: check check-commit check-go check-go-static check-hono check-worker check-worker-local check-conformance check-scenarios check-examples check-laya check-laya-startup check-verification check-secrets check-example-env true-up-build true-up-check true-up-impact
 
 help:
 	@printf '%s\n' \
 	  'One System: a System One API router with model-based selection for multiple backends.' \
-	  'Primary completion check: make verify (uses System One; requires TYPESAFE_API_KEY).' \
-	  'Full developer setup: mise install && make setup-dev; inspect with make doctor; verify with make check-dev.' \
-	  'Push gate: make setup-hooks once per clone; pre-push then runs make setup-dev check-push on each pushed branch or tag tip.' \
+	  'Full developer setup: mise install && make setup-dev; inspect with make doctor.' \
+	  'The one gate: make check (everything; the pre-push hook and hosted workflow run exactly this).' \
+	  'Fast loop: make check-go; make check-conformance ONE_SYSTEM_RUNTIMES=go (or hono).' \
+	  'Advisory dogfooding: make review [BASE=main] sends changed files through One System to pinned Jev once.' \
+	  'Push gate: make setup-hooks once per clone; pre-push then runs make setup-dev check on each pushed branch or tag tip.' \
 	  'Same gate without pushing: make check-commit REV=HEAD (required before jj git push, which runs no Git hooks).' \
 	  'Hosted workflows are opt-in only: gh workflow run conformance.yml, check.yml, or release.yml --ref <revision>.' \
 	  'Go router bootstrap: mise install && mise exec -- make setup build' \
@@ -35,17 +38,16 @@ help:
 	  'Hono local service: make serve-hono (same ONE_SYSTEM_* and backend credential variables).' \
 	  'Shared HTTP conformance: make check-conformance (isolated servers, synthetic upstreams, no paid inference).' \
 	  'Example dependencies: make setup-examples (isolated SDK/YAML environment; no Torch; EXAMPLE_VENV overrides its path).' \
-	  'Verifier dependency: make setup-verification (official JavaScript SDK, isolated from gateway runtime).' \
 	  'Checks use the prepared example environment without installing packages.' \
 	  'Public example checks: make check-examples. Private corpus binding: SKILLS_LIBRARY_PATH; never publish its value.' \
 	  'Worker deployment check: make check-worker (bundle only; no account required).' \
 	  'Worker local runtime check: make check-worker-local (synthetic loopback services, no deployment).' \
-	  'System One scenario collection: make check-scenarios (offline); make verify adds model judgments.' \
+	  'Cross-language scenarios: make check-scenarios (offline, deterministic).' \
 	  'Dependency checks: make true-up-check (true-up 0.2.1; newly added source files must be tracked).' \
 	  'Edit coverage: make true-up-impact BASE=HEAD (advisory, not semantic proof).' \
 	  'Optional local adapter: make setup-laya (requires uv; checkpoint supplied separately).' \
 	  'Apple Silicon GPU: make setup-laya-mlx, then LAYA_RUNTIME=mlx make serve-laya.' \
-	  'Optional adapter verification: make check-laya (requires checkpoint and TYPESAFE_API_KEY).' \
+	  'Optional adapter scenarios: make check-laya (requires an installed adapter and LAYA_MODEL_PATH).' \
 	  'Configuration: backends.json (required name routing-demo, selector ID and HTTP backends; secrets referenced by env name).' \
 	  'Configured backend IDs invoke that backend directly; the registry name enables automatic selection, with no implicit alias.' \
 	  'Hard capabilities reject unsupported requests on every route; legacy limits remain soft preferences.' \
@@ -81,7 +83,7 @@ help:
 setup:
 	$(GO) mod download
 
-setup-dev: setup setup-hono setup-examples setup-verification
+setup-dev: setup setup-hono setup-examples
 
 # The optional inference adapter is separate from gateway development.
 setup-laya:
@@ -92,19 +94,9 @@ setup-laya-mlx:
 	$(UV) run --no-project --python 3.12 python scripts/check_package_age.py
 	$(UV) sync --locked --python 3.12 --extra mlx
 
+# hono/bun.lock is the only JavaScript lock; installs honor the three-day release age.
 setup-hono:
-	$(BUN) hono/scripts/check-locks.mjs
-	$(BUN) install --cwd hono --frozen-lockfile --no-save --minimum-release-age 259200
-	$(BUN) hono/scripts/check-locks.mjs
-
-check-hono-locks:
-	$(BUN) hono/scripts/check-locks.mjs
-	$(BUN) test hono/scripts/check-locks.test.mjs
-
-setup-verification:
-	$(BUN) hono/scripts/check-locks.mjs verification
-	$(BUN) install --cwd verification --frozen-lockfile --no-save --minimum-release-age 259200
-	$(BUN) hono/scripts/check-locks.mjs verification
+	$(BUN) install --cwd hono --frozen-lockfile --minimum-release-age 259200
 
 setup-examples:
 	mkdir -p .build
@@ -130,9 +122,6 @@ check-commit:
 doctor:
 	$(PYTHON) scripts/doctor.py --profile "$(PROFILE)" --node "$(NODE)" --go "$(GO)" --bun "$(BUN)" --uv "$(UV)" --example-venv "$(EXAMPLE_VENV)"
 
-check-hygiene:
-	$(NODE) verification/scenarios.ts --group repository
-
 check-secrets:
 	$(PYTHON) scripts/check_secrets.py
 
@@ -157,15 +146,14 @@ build-conformance:
 	mkdir -p .build
 	$(GO) build -o .build/one-system .
 
-check:
+# The one gate. .githooks/pre-push and the hosted workflow run exactly this;
+# the component targets below are for faster feedback while developing.
+check: check-verification check-go-static check-hono check-conformance check-scenarios check-worker true-up-check check-secrets
+
+check-go:
 	$(GO) test ./...
 
-check-dev: check-verification check check-hono check-hono-locks check-conformance check-scenarios check-worker
-
-# Everything the hosted gateway workflow checks. .githooks/pre-push runs this on
-# each pushed commit; the hosted workflows themselves run only on request.
-check-push: check-dev check-go-static true-up-check
-
+# Every Go test under the race detector, plus vet; the gate runs this instead of check-go.
 check-go-static:
 	$(GO) list ./...
 	$(GO) test -race ./...
@@ -185,26 +173,29 @@ check-conformance: build-conformance build-hono check-example-env
 	ONE_SYSTEM_HONO_ENTRY="$(abspath hono/dist/node.js)" \
 	ONE_SYSTEM_NODE_BINARY="$$(command -v "$(NODE)")" \
 	ONE_SYSTEM_SKILL_PYTHON="$(abspath $(EXAMPLE_VENV)/bin/python)" \
+	ONE_SYSTEM_RUNTIMES="$(ONE_SYSTEM_RUNTIMES)" \
 	$(GO) test -count=1 ./conformance -timeout 5m
 
-# These collect deterministic observations; make verify asks System One to judge them.
+# Cross-language scenarios; each observation carries its own deterministic verdict.
 check-scenarios: check-example-env build-hono build-conformance
 	EXAMPLE_VENV="$(abspath $(EXAMPLE_VENV))" $(NODE) verification/scenarios.ts --group all
 
-check-examples check-review: check-example-env
+check-examples: check-example-env
 	EXAMPLE_VENV="$(abspath $(EXAMPLE_VENV))" $(NODE) verification/scenarios.ts --group examples
 
 check-laya-startup:
 	$(NODE) verification/scenarios.ts --group laya-startup
 
 check-laya:
-	$(MAKE) verify VERIFY_ARGS="--include-laya $(VERIFY_ARGS)"
+	@set -a; test ! -f .env || . ./.env; set +a; exec $(NODE) verification/scenarios.ts --group laya
 
 true-up-build:
 	$(TRUE_UP) build
 
+# Declared spec edges must resolve, and nothing may reference a machine-local path.
 true-up-check: true-up-build
-	$(TRUE_UP) gate
+	$(TRUE_UP) --policy
+	$(TRUE_UP) --externalities
 
 BASE ?= HEAD
 true-up-impact: true-up-build
@@ -219,14 +210,10 @@ serve-hono: build-hono
 serve-laya:
 	@set -a; test ! -f .env || . ./.env; set +a; exec .venv/bin/python -m adapters.laya
 
-VERIFY_ARGS ?=
-verify:
-	@set -a; test ! -f .env || . ./.env; set +a; exec $(NODE) verification/verify.ts $(VERIFY_ARGS)
-
-verify-help:
-	@$(NODE) verification/verify.ts --help
+# Advisory, never a gate: one request per run, answers are review signals.
+review: build-conformance
+	@set -a; test ! -f .env || . ./.env; set +a; exec $(NODE) verification/review.ts
 
 check-verification:
-	$(BUN) hono/scripts/check-locks.mjs verification
 	$(NODE) hono/node_modules/typescript/bin/tsc -p verification/tsconfig.json
 	$(NODE) --test verification/*.test.ts

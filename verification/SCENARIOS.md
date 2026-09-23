@@ -1,11 +1,10 @@
 # System One scenarios
 
-System One owns the cross-language verification workflow. Go and Hono retain
-their native tests. Scenario collectors execute the existing tools and HTTP
-interfaces, record synthetic observations, and enforce exact invariants in code.
-System One then judges whether those observations honor the recorded contracts.
-The model receives the contract and observed outcome, without the native pass flag.
-It cannot override a failed assertion or make missing evidence pass.
+Go and Hono retain their native tests. These scenarios cover what crosses
+languages and tools: collectors execute the existing tools and HTTP interfaces,
+record synthetic observations, and enforce exact invariants in code. Each
+observation carries its contract and its deterministic verdict; missing evidence
+is reported as incomplete, never as a pass.
 
 Python remains an implementation dependency of the optional adapter, SDK examples,
 and development commands. There is no Python test suite or test discovery. Small
@@ -14,7 +13,6 @@ assertions, expectations, or a second test runner.
 
 ## Repository safeguards
 
-<!-- true-up:anchor id=repository -->
 Committed ignore rules must protect private/generated paths while keeping source,
 templates and canonical locks trackable. Templates contain blank credentials.
 Every registry artifact must satisfy the 72-hour release-age policy, including
@@ -37,11 +35,9 @@ nested submodules contribute tracked and nonignored sources plus their staged
 changes and history; ignored private files must never be opened or enumerated.
 Missing, uninitialized, mismatched, symlinked, or otherwise unsafe sources must
 fail preflight before any source copy or scanner invocation.
-<!-- true-up:end id=repository -->
 
 ## SDK consumers and evidence admission
 
-<!-- true-up:anchor id=examples -->
 Skill suggestions use native System One questions through the SDK, preserve the
 whole candidate roster, and apply the documented gate/verification thresholds.
 The first gate is the mean of the three request signals. Once the maximum
@@ -120,11 +116,9 @@ or malformed answers prevent adjudication; adjudicator failures also produce no
 final response. Errors exit 2 with empty stdout and sanitized diagnostics, without
 retries, fallback or partial success. Synthetic HTTP scenarios prove concurrency,
 stage ordering, answer preservation and failure behavior, not model quality.
-<!-- true-up:end id=examples -->
 
 ## Worker transport
 
-<!-- true-up:anchor id=worker -->
 The actual built Worker must enforce authentication. Catalogue requests without
 the correct bearer credential return 401 without disclosing models or capabilities.
 Authorized requests expose the configured model/capability catalogue. The required
@@ -150,33 +144,26 @@ cache eviction never deletes recording history. A large insertion into a D1 cach
 filled with small entries must enforce the byte budget and oldest-write eviction
 within that write. These scenarios use synthetic bodies and a local-only wrapper
 to inspect storage; no inspection endpoint is shipped.
-<!-- true-up:end id=worker -->
 
 ## Optional local inference
 
-<!-- true-up:anchor id=laya -->
 The local adapter rejects unknown runtimes and missing or incomplete checkpoints
 without downloading replacements. Its installed runtime can import and perform
 tensor operations. Real checkpoint verification requires authenticated HTTP
 inference, native typed answers and usage, catalogue authentication, rejection
 before truncation, and forwarding through the Go gateway. Missing prerequisites
 are incomplete evidence, never a passing inference test.
-<!-- true-up:end id=laya -->
 
-`make verify` collects repository, SDK consumer and Worker scenarios and sends
-each application scenario as its own state to the declared System One questions.
-Questions about that case share context; unrelated executions do not. At most eight
-evaluation requests run concurrently. `make check-scenarios`
-collects the same observations offline; it does not claim semantic verification.
-Each run keeps private evidence under `.build/`. There are no automatic installs.
+`make check-scenarios` collects the repository, SDK consumer and Worker scenarios
+offline and fails on any failed observation. Each run keeps private evidence under
+`.build/scenarios/`. There are no automatic installs.
 
 `make check-laya-startup` collects only startup/runtime observations. With a prepared
-adapter, `LAYA_MODEL_PATH`, and evaluator credentials, `make check-laya` includes
-the complete local inference profile in System One verification. Missing runtime
+adapter and `LAYA_MODEL_PATH`, `make check-laya` runs the complete local inference
+profile. Missing runtime
 or checkpoint produces an incomplete result. CI startup checks do not certify
 inference; they deliberately need no downloaded weights or hosted credentials.
 
 The migration replaces the former repository, example and adapter unittest files
 and the Python Worker smoke runner. Python-specific discovery tests are obsolete;
-their replacement is the explicit scenario registry. The verifier retains its
-small native tests for evidence integrity, completion status and model transport.
+their replacement is the explicit scenario registry.

@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { artifactDirectory, launch, ready, stop, unusedPort } from './worker.ts';
 import type { Scenario } from './scenarios.ts';
-import type { Json } from './semantic.ts';
+import type { Json } from './scenarios.ts';
 
 // This local-only wrapper exposes its synthetic R2 objects to the collector.
 // Production gateway bundles contain none of these inspection routes.

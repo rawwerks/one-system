@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { Json } from './semantic.ts';
+import type { Json } from './scenarios.ts';
 
 type Observation = { id: string; contract: string; observed: Json; passed: boolean };
 type Result = { code: number; stdout: string; stderr: string };
@@ -163,20 +163,20 @@ export async function collectRepository(root: string): Promise<Observation[]> {
   const node = join(doctor, 'node'), bun = join(doctor, 'bun');
   executable(bun, 'console.log("1.3.11")');
   for (const scenario of ['actual-node', 'bun-alias', 'malformed-lock']) {
-    const lockContents = scenario === 'malformed-lock' ? 'not json' : JSON.stringify({ packages: { '': { dependencies: {}, devDependencies: {} } } });
+    const lockContents = scenario === 'malformed-lock' ? 'not json' : JSON.stringify({ dependencies: {}, devDependencies: {} });
     const nodeVersions: Record<string, string> = scenario === 'bun-alias' ? { node: '24.14.1', bun: '1.3.11' } : { node: '24.14.1' };
-    writeFileSync(join(doctor, 'hono/package-lock.json'), lockContents);
+    writeFileSync(join(doctor, 'hono/package.json'), lockContents);
     executable(node, `console.log(${JSON.stringify(JSON.stringify(nodeVersions))})`);
     const result = await run(python, [doctorScript, '--profile', 'hono', '--node', node, '--bun', bun], doctor);
     const label = scenario === 'actual-node' ? 'OK: Actual Node 24' : scenario === 'bun-alias' ? 'MISSING: Actual Node 24' : 'MISSING: Hono';
-    const remedy = scenario === 'bun-alias' ? '--node /path/to/node' : scenario === 'malformed-lock' ? 'package-lock.json' : 'OK: Actual Node 24';
+    const remedy = scenario === 'bun-alias' ? '--node /path/to/node' : scenario === 'malformed-lock' ? 'hono/package.json' : 'OK: Actual Node 24';
     const actionable = result.stdout.includes(label) && result.stdout.includes(remedy) && !result.stderr.includes('Traceback');
     // The Hono profile has independent prerequisites; describe the one this fixture varies.
     const contract = scenario === 'actual-node'
-      ? 'Doctor must accept the supplied Node 24 version probe without a Bun identity, available Bun runner and valid empty direct-dependency lock, and exit 0 without a traceback.'
+      ? 'Doctor must accept the supplied Node 24 version probe without a Bun identity, available Bun runner and valid empty direct-dependency manifest, and exit 0 without a traceback.'
       : scenario === 'bun-alias'
         ? 'Doctor must reject the supplied runtime probe containing a Bun identity even when it reports Node 24, exit 1, and identify how to select real Node without a traceback.'
-        : 'Doctor must reject the supplied malformed Hono dependency lock, exit 1, and provide a lock/setup remedy without a traceback; valid runtime probes cannot override invalid dependency metadata.';
+        : 'Doctor must reject the supplied malformed Hono dependency manifest, exit 1, and provide a manifest/setup remedy without a traceback; valid runtime probes cannot override invalid dependency metadata.';
     add(`doctor.${scenario}`, contract,
       { operation: 'Execute scripts/doctor.py --profile hono with controlled runtime probes', fixture: { profile: 'hono', nodeProbeVersions: nodeVersions, bunProbeVersion: '1.3.11', lockContents }, exit: result.code, diagnostic: result.stdout.trim(), stderr: result.stderr }, result.code === (scenario === 'actual-node' ? 0 : 1) && actionable);
   }

@@ -54,18 +54,16 @@ def main():
               'Install the pinned Bun with mise install, or set BUN to its executable.')
         missing = []
         try:
-            lock = json.loads((ROOT / 'hono/package-lock.json').read_text())
-            direct = lock['packages']['']
-            for name in sorted(set(direct['dependencies']) | set(direct['devDependencies'])):
+            manifest = json.loads((ROOT / 'hono/package.json').read_text())
+            pins = {**manifest['dependencies'], **manifest['devDependencies']}
+            for name, expected in sorted(pins.items()):
                 installed = ROOT / 'hono/node_modules' / name / 'package.json'
-                actual = json.loads(installed.read_text())['version']
-                expected = lock['packages']['node_modules/' + name]['version']
-                if actual != expected:
+                if json.loads(installed.read_text())['version'] != expected:
                     missing.append(name)
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             missing.append('missing or malformed dependency metadata')
-        check('Hono direct dependencies match the committed lock', not missing,
-              'Check package-lock.json, then run make setup-hono. This check does not certify every transitive dependency.')
+        check('Hono direct dependencies match their exact package.json pins', not missing,
+              'Check hono/package.json, then run make setup-hono. This check does not certify every transitive dependency.')
 
     if args.profile in ('examples', 'all'):
         check('uv environment manager', probe([args.uv, '--version']) is not None,
@@ -84,18 +82,6 @@ def main():
               'Run make setup-examples, or select an existing EXAMPLE_VENV. Honor package-age restrictions.')
 
     if args.profile == 'all':
-        try:
-            manifest = json.loads((ROOT / 'verification/package.json').read_text())
-            lock = json.loads((ROOT / 'verification/package-lock.json').read_text())
-            expected = lock['packages']['node_modules/@typesafe-ai/sdk']['version']
-            actual = json.loads((ROOT / 'verification/node_modules/@typesafe-ai/sdk/package.json').read_text())['version']
-            ready = (isinstance(expected, str) and bool(expected)
-                     and actual == expected == manifest['dependencies']['@typesafe-ai/sdk']
-                     == lock['packages']['']['dependencies']['@typesafe-ai/sdk'])
-        except (OSError, ValueError, KeyError, TypeError):
-            ready = False
-        check('Isolated JavaScript verifier SDK matches its manifest and lock', ready,
-              'Run make setup-verification. Honor package-age restrictions; gateways do not need this SDK.')
         check('Gitleaks secret scanner', shutil.which('gitleaks') is not None,
               'Install Gitleaks before committing; see CONTRIBUTING.md.')
         check('true-up 0.2.1 dependency checker', probe(['true-up', '--version']) == 'true-up 0.2.1',

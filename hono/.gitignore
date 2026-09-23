@@ -2,5 +2,3 @@
 /dist/
 /src/generated/
 /.wrangler/
-# Bun imports package-lock.json for local use; npm's lock remains authoritative.
-/bun.lock

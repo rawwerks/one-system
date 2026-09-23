@@ -508,7 +508,6 @@ func (r *router) escalates(answers map[string]json.RawMessage) (bool, string) {
 	return false, ""
 }
 
-// true-up:anchor id=hard-capability-check
 type questionShape struct {
 	kind     string
 	criteria int
@@ -582,8 +581,6 @@ func (b backend) supports(state any, questions []questionShape) bool {
 	}
 	return true
 }
-
-// true-up:end id=hard-capability-check
 
 // Hard constraints apply first; soft preferences can only restore capable backends.
 // Sorted so the selector's option order is stable across requests.

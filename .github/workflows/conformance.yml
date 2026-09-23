@@ -1,7 +1,7 @@
 name: Shared conformance
 
-# Routine checking is local: .githooks/pre-push runs make check-push on the tip
-# of every pushed branch or tag. Request this explicitly for hosted macOS coverage.
+# Routine checking is local: .githooks/pre-push runs make check on the tip of
+# every pushed branch or tag. Request this explicitly for hosted macOS coverage.
 on:
   workflow_dispatch:
 
@@ -9,33 +9,32 @@ permissions:
   contents: read
 
 jobs:
-  gateways:
-    name: Gateway and Worker checks (${{ matrix.os }})
+  check:
+    name: make check (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version: '24.14.1'
-          cache: npm
-          cache-dependency-path: |
-            hono/package-lock.json
-            verification/package-lock.json
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.11'
-      - name: Install independent gateway tooling
-        run: |
-          make setup setup-verification
-          npm --prefix hono ci
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.27'
+      - name: Install Gitleaks
+        run: go install github.com/zricethezav/gitleaks/v8@v8.30.0 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Fetch the pinned dependency-graph checker
         uses: actions/checkout@v4
         with:
@@ -43,49 +42,9 @@ jobs:
           ref: 527b3b81fc555d48730392cad41d388d5f6fbe0c # 0.2.1, not published to npm
           path: .build/true-up
           persist-credentials: false
-      - name: Check implementations and repository tooling
-        run: make check-verification check check-hono check-hono-locks check-hygiene JS_RUN='npm --prefix hono run'
-      - name: Resolve Go packages without module-mode overrides
-        run: go list ./...
-      - name: Check Go races and static analysis
-        run: |
-          go test -race ./...
-          go vet ./...
-      - name: Check deployment bundle
-        run: make check-worker JS_RUN='npm --prefix hono run'
-      - name: Exercise local Worker runtime
-        run: make check-worker-local JS_RUN='npm --prefix hono run'
-      - name: Check declared cross-runtime dependencies
+      - name: Run the single gate
+        env:
+          UV_EXCLUDE_NEWER: '3 days'
         run: |
           test "$(.build/true-up/bin/true-up --version)" = 'true-up 0.2.1'
-          make true-up-check TRUE_UP="$GITHUB_WORKSPACE/.build/true-up/bin/true-up"
-
-  sdk-conformance:
-    name: SDK and cross-runtime conformance (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-14]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    env:
-      UV_EXCLUDE_NEWER: '3 days'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.14.1'
-          cache: npm
-          cache-dependency-path: hono/package-lock.json
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: '0.11.27'
-      - name: Install gateway and SDK tooling
-        run: |
-          make setup setup-examples
-          npm --prefix hono ci
-      - name: Check SDK examples and both HTTP implementations
-        run: make check-examples check-conformance JS_RUN='npm --prefix hono run'
+          make setup-dev check TRUE_UP="$GITHUB_WORKSPACE/.build/true-up/bin/true-up" NODE="$(command -v node)"

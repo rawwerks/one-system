@@ -5,7 +5,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { collectRepository } from './repository.ts';
-import { semanticRows } from './scenarios.ts';
 
 test('malformed doctor process output fails its observation without losing other evidence', { timeout: 60_000 }, async () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
@@ -39,8 +38,8 @@ test('malformed doctor process output fails its observation without losing other
   assert.equal(observed.returned, null);
   assert.equal(observed.exit, 0);
   assert.equal(observed.error, 'invalid_probe_json');
-  const exported = JSON.stringify(semanticRows(rows));
-  assert.equal(exported.includes(fixture), false, 'semantic evidence must not disclose the checkout root');
+  const exported = JSON.stringify(rows);
+  assert.equal(exported.includes(fixture), false, 'scenario evidence must not disclose the checkout root');
   assert.equal(exported.includes(encodeURIComponent(fixture)), false, 'encoded checkout roots are private too');
   const setup = rows.find(row => row.id === 'setup-laya.mature')?.observed;
   assert.ok(setup && typeof setup === 'object' && !Array.isArray(setup));

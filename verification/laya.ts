@@ -2,7 +2,7 @@ import { spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { artifactDirectory, launch, ready, request, stop, unusedPort } from './worker.ts';
-import type { Json } from './semantic.ts';
+import type { Json } from './scenarios.ts';
 import type { Scenario } from './scenarios.ts';
 
 /** Invoke the adapter's schema engine; TypeScript owns all scenario expectations. */

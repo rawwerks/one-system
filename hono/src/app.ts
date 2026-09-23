@@ -31,7 +31,6 @@ const selectorID = 'backend';
 const encoder = new TextEncoder();
 const letter = /\p{L}/u;
 
-// true-up:anchor id=hard-capability-check
 interface QuestionShape { readonly kind: string; readonly criteria: bigint }
 
 // Analyze validated questions once; keep their original JSON for forwarding.
@@ -59,8 +58,6 @@ function supports(backend: Backend, stringState: boolean, questions: readonly Qu
   }
   return true;
 }
-
-// true-up:end id=hard-capability-check
 
 function summarize(state: JsonNode): { characters: number; non_ascii_letter_fraction: number } {
   const source = compact(raw(state));

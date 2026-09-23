@@ -133,12 +133,11 @@ rubric or lower thresholds simply to make the current patch pass.
 
 The critical questions include inference in the gateway, hard-capability bypass,
 named-model substitution and model-specific core branches. They supplement
-deterministic tests and source inspection. `make check-examples` (also exposed as `make check-review`) collects actual
+deterministic tests and source inspection. `make check-examples` collects actual
 review/probe/gate CLI and SDK scenarios against a synthetic loopback HTTP server,
 including corrupted evidence and contradictory answers. The offline collector
-requires no inference credentials. `make verify` passes these observed outcomes
-to versioned System One questions; failed exact checks or missing evidence can
-never become a positive verification.
+requires no inference credentials; failed exact checks or missing evidence fail
+the collection.
 
 ## Review who a whole file is written for
 

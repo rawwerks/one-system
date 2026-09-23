@@ -170,7 +170,6 @@ selector and fallback. The [configuration guide](docs/configuration.md) explains
 credentials, routing rules, and adding an external server. The native API uses
 `POST /v1/systemone`; there is no chat-completions endpoint.
 
-<!-- true-up:anchor id=capability-constraints -->
 Optional backend `capabilities` declare hard constraints: `question_types`,
 `max_questions`, `min_criteria`, `max_criteria`, and `structured_state`.
 `question_types` is required when capabilities are declared; `structured_state:
@@ -180,7 +179,6 @@ route, including selection and fallback. Unsupported requests return HTTP 422
 Omitted capabilities mean unknown. Backend servers still validate their exact
 model and context limits. See [configuration](docs/configuration.md#adding-a-backend)
 for the JSON format.
-<!-- true-up:end id=capability-constraints -->
 
 Decision caching and full request/response recording are optional and off until
 configured. Cache identical requests to avoid repeated inference; enable recording

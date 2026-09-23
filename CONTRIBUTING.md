@@ -40,23 +40,15 @@ mise trust  # after reviewing mise.toml in a new checkout
 mise install
 make setup-dev
 make doctor
-make check-dev
+make check
 ```
 
 `setup-dev` prepares gateway and SDK dependencies without installing the optional
 Laya/Torch stack. `doctor` diagnoses runtime identity, dependency availability, and
 development-tool prerequisites without reading credentials or running inference.
-`check-dev` runs the local gateway, SDK, hygiene, and Worker checks. Secret scanning
-and the declared dependency graph gate are separate:
-
-```sh
-make check-secrets
-make true-up-check
-```
-
-These last two commands require Gitleaks and `true-up` 0.2.1 on PATH; the
-environment check reports them separately from gateway runtimes. Keep your
-existing global Git hook dispatcher if it already invokes the repository hook.
+`make check` is the one gate: the pre-push hook and the hosted workflow run exactly
+it. It needs Gitleaks and `true-up` 0.2.1 on PATH; `make doctor` reports them
+separately from gateway runtimes. See [the one gate](docs/development-checks.md#the-one-gate).
 
 `true-up` 0.2.1 is available from source, not the npm registry. CI pins the
 public commit below, whose launcher and library files match the tested 0.2.1
@@ -73,27 +65,25 @@ make true-up-check
 
 | Work | Setup | Verification |
 | --- | --- | --- |
-| Go gateway | `make setup build` | `make check` |
+| Go gateway | `make setup build` | `make check-go` |
 | Hono gateway | `make setup-hono build-hono` | `make check-hono` |
 | SDK skill example | `make setup-examples` | `make check-examples` |
 | SDK integration review/probe/gate | Same example environment | `make check-examples` (synthetic loopback HTTP) |
-| Both gateways and SDK integration | All three setups above | `make check-conformance` |
+| Both gateways and SDK integration | All three setups above | `make check-conformance` (`ONE_SYSTEM_RUNTIMES=go` or `hono` for one) |
 | Worker packaging and local runtime | Hono setup above | `make check-worker check-worker-local` |
 | System One consumer scenarios | Node 24 and example environment | `make check-examples` |
-| System One verifier | `make setup-dev` (includes `setup-verification`) | `make check-verification`, then authenticated `make verify` |
+| Verification tooling (TypeScript) | Hono setup above | `make check-verification` |
 | Optional Laya CPU adapter startup | Node 24 and `make setup-laya` | `make check-laya-startup` |
 | Optional Apple Silicon MLX adapter startup | Node 24 and `make setup-laya-mlx` | `LAYA_RUNTIME=mlx make check-laya-startup` |
-| Full verification including Laya inference | Full developer setup, adapter runtime, checkpoint and evaluator credentials | `make check-laya` |
+| Laya inference scenarios | Adapter runtime and checkpoint (`LAYA_MODEL_PATH`) | `make check-laya` |
 
 Bun and uv are required for the corresponding setup targets. Example setup uses
 Python 3.12 and an isolated `.build/example-venv`. The optional `make setup-laya`
 environment is separate: it installs the CPU inference stack into `.venv` and
 requires a separately supplied checkpoint to serve requests. Apple Silicon can
 add the MLX GPU runtime with `make setup-laya-mlx`. Adapter scenarios live under
-`verification/`. `check-laya` runs the full `make verify` workflow, so it also needs
-the Go/Hono/SDK developer setup, true-up and Gitleaks described above. It requires
-a checkpoint and evaluator credentials and reports incomplete when either is unavailable.
-`make check-laya-startup` collects only runtime/startup observations. This
+`verification/`. `check-laya` requires a checkpoint and reports incomplete when it
+is unavailable. `make check-laya-startup` collects only runtime/startup observations. This
 environment is unnecessary for gateway development and conformance tests. See
 [local Laya setup](docs/local-laya.md) for checkpoint setup and local-only operation.
 
@@ -107,24 +97,20 @@ This manual option uses `uv sync --frozen` to install the committed versions
 without updating the lockfile, and records the override in the run summary.
 Commit matching dependency declarations and lockfile first: frozen mode treats
 the lockfile as authoritative rather than checking it against the manifest.
-Ordinary push/PR runs and local setup retain the cooldown. It changes package
+Local setup and every other workflow run retain the cooldown. It changes package
 eligibility only; all adapter startup/runtime checks still run.
 
 Commit dependency declarations and their canonical lockfiles: `go.mod`/`go.sum`,
-`hono/package.json`/`hono/package-lock.json`,
-`verification/package.json`/`verification/package-lock.json`, and `pyproject.toml`/`uv.lock`.
+`hono/package.json`/`hono/bun.lock`, and `pyproject.toml`/`uv.lock`.
 The SDK example's inline dependency metadata and `examples/requirements.lock`
 are versioned together. Setup installs that exact hash-checked dependency lock;
 `make update-examples-lock` deliberately regenerates it when changing the example
-dependencies. Review the resulting versions and hashes before committing. Bun imports the
-npm lock locally; `hono/bun.lock` and `verification/bun.lock` are disposable.
-`make setup-hono` and `make setup-verification` check for stale imported locks
-before installing with the frozen lock and three-day release-age policy.
-`make check-hono-locks` exercises the shared guard; `make check-verification`
-also checks the verifier's locks. If either setup reports drift, preserve its local
-lock for inspection, move it out of that package directory, and rerun setup to
-import the reviewed npm lock. The official JavaScript SDK is a verifier-local
-dependency, not part of either gateway runtime. Do not commit generated schema
+dependencies. Review the resulting versions and hashes before committing. Bun is
+the only JavaScript package manager: `make setup-hono` installs the frozen
+`hono/bun.lock` with a three-day minimum release age. To change a dependency,
+edit the exact pin in `hono/package.json`, run `bun install --cwd hono
+--minimum-release-age 259200`, and review the lock diff. `verification/` has no
+package dependencies; it runs on Node 24 alone. Do not commit generated schema
 modules, compiled bundles, package trees, virtual environments, or downloaded
 weights. The build regenerates Hono schema modules from the pinned OpenAPI file.
 
@@ -133,13 +119,10 @@ pins and reuse an already installed compatible environment or wait. Do not weake
 the policy or substitute package versions just to make setup pass. Tests use
 prepared environments; they do not implicitly install Python dependencies.
 Routine checking is the local push gate described in
-[development checks](docs/development-checks.md#offline-parity-review); the hosted
-workflows run only when explicitly dispatched, mainly for optional macOS coverage.
-When requested, CI reports gateway/Worker checks separately from SDK and
-cross-runtime conformance, so an SDK bootstrap failure does not prevent the
-independent checks from running. A green gateway job alone does not verify SDK
-integration; report each requested job's result, including failures. The separate
-adapter workflow checks CPU/MLX setup and startup without a checkpoint.
+[the one gate](docs/development-checks.md#the-one-gate); the hosted workflows run
+only when explicitly dispatched, mainly for optional macOS coverage. The hosted
+conformance workflow runs the same `make setup-dev check` on Linux and macOS.
+The separate adapter workflow checks CPU/MLX setup and startup without a checkpoint.
 A package-age failure remains a real setup blocker,
 not permission to switch from `--locked` to `--frozen` or relax cutoffs without
 explicit authorization through the manual workflow above.
@@ -183,8 +166,7 @@ cmp .build/downloads/SHA256SUMS .build/downloads-repeat/SHA256SUMS
 Share only reviewed assets under the repository's current sharing policy.
 `make package-go` does not publish anything. Recipient instructions are in
 [the binary installation guide](docs/binary-install.md) and each archive's
-`INSTALL.md`. Building these bundles does not replace normal development checks,
-or semantic verification.
+`INSTALL.md`. Building these bundles does not replace normal development checks.
 
 ## Publish a Go release
 
@@ -206,9 +188,8 @@ explicitly request the manual workflow. Cross-built archives are inspected, not
 executed on an incompatible host. Report coverage gaps rather than treating
 cross-compilation as native verification.
 
-Complete the normal development/security checks, required semantic verification,
-and source/asset review before tagging. Missing inference evidence remains
-incomplete; this recipe does not call paid inference or grant semantic clearance.
+Complete the normal development/security checks and source/asset review before
+tagging. This recipe does not call paid inference.
 Prepare the full contributor toolchain above, including Gitleaks and true-up on
 PATH, and authenticate `gh` with repository write access. Use the committed
 Go 1.27.1 and Node 24.14.1 toolchain; set `GNU_TAR=gtar` on a macOS build host.
@@ -296,7 +277,7 @@ For a real gateway, copy the blank template with owner-only permissions:
 
 Fill `.env` locally without pasting secrets into shared logs or documents. Go,
 Node, and Laya serve targets source it as shell code, so only use a file you
-trust. `check-laya` also sources this file. Its assignments override same-named
+trust. `check-laya` and `review` also source this file. Its assignments override same-named
 exported variables, so configure each value in one place. The default
 registry requires every named backend credential; blank keys deliberately fail
 startup. See [`.env.example`](.env.example) for the variable names.
@@ -352,15 +333,12 @@ private/generated paths must be ignored, and canonical source/templates/locks
 must remain trackable. It uses a temporary Git repository, so it cannot read local
 secrets or depend on personal global ignore rules:
 
-`make check-hygiene` collects these executable scenarios together with development-tool checks. It
-also checks that SDK dependency declarations and the hashed example lock agree.
+`node verification/scenarios.ts --group repository` collects these executable
+scenarios together with development-tool checks; `make check-scenarios` includes
+them. It also checks that SDK dependency declarations and the hashed example lock agree.
 
-Enable the repository hooks with `make setup-hooks`: the Gitleaks pre-commit hook
-and the pre-push gate described in
-[development checks](docs/development-checks.md#offline-parity-review). Keep an
-existing global hook dispatcher only if it invokes both `.githooks/pre-commit`
-and `.githooks/pre-push`; `make doctor` expects the installed repository hooks.
-A separate `make check-secrets` scans tracked and nonignored working files and
+Enable the repository hooks with `make setup-hooks`; [the one gate](docs/development-checks.md#the-one-gate)
+describes what they enforce. `make check-secrets`, part of `make check`, scans tracked and nonignored working files and
 Git history, including initialized pinned submodules, with secret values redacted.
 Ignored, untracked local files are not included. Missing, uninitialized, mismatched,
 or symlinked submodules fail before source copying. A secret scanner detects
@@ -368,18 +346,16 @@ credential patterns, not whether prompts, source
 snippets, skill descriptions, paths, or inference responses are private.
 
 Version prompts, contract changes, tests, and their human-facing documentation
-together. The `true-up` gate checks the declared dependency graph; changes to
-dependency declarations require human approval under the contract. Use Mycelium
+together. `.true-up.json` declares which implementations, conformance tests and
+contract cases derive from each shared spec file; `make true-up-impact BASE=<ref>`
+lists them for review. Changes to those declarations require human approval. Use Mycelium
 git notes for agent handoff details rather than adding session transcripts to
 source files. Mycelium and every `refs/notes/*` ref are local-only: reading and
 writing local notes remains supported, but do not run `mycelium.sh sync-init`,
 push notes refs, or publish a repository mirror containing notes.
 
-The pre-push hook rejects note creation and updates before any build/test checkout,
-including when `ONE_SYSTEM_SKIP_PRE_PUSH=1` skips validation. Zero-SHA note deletions
-are allowed so already-published notes can be removed. Do not bypass the note
-guard. Git `--no-verify` and `jj git push` do not enforce Git hooks and must not
-publish notes; running source checks does not authorize note publication.
+The pre-push hook's note guard is described with [the one gate](docs/development-checks.md#the-one-gate);
+running source checks does not authorize note publication.
 
 ## Moving work between machines
 
@@ -417,14 +393,12 @@ identities and private registries do not belong in tracked files.
 
 ## Use the system while building it
 
-Run `make verify` during meaningful development and before declaring completion.
-It combines native checks with System One judgments over true-up-linked evidence,
-including checks of the verifier itself. See [verification](verification/README.md).
-`make check-dev` remains fast offline feedback; a native-only verification is
-explicitly incomplete. Keep credentials and generated evidence untracked.
+`make review [BASE=<ref>]` sends the files changed since `BASE` (default `HEAD`)
+through a temporary One System gateway to pinned Jev, once, and prints advisory
+judgments. It needs `TYPESAFE_API_KEY` and may incur charges. It is never a gate:
+treat answers as review signals and confirm them with tests and source reading.
 
-Cross-language tests belong to System One verification. There is no Python test
-framework or discovery command. `make check-scenarios` runs actual tools and HTTP
-requests and records their deterministic outcomes; `make verify` additionally
-asks System One whether bounded batches honor their contracts. Model judgments
-never override exact failures. See [scenario coverage](verification/SCENARIOS.md).
+Cross-language tests are TypeScript scenarios under `verification/`. There is no
+Python test framework or discovery command. `make check-scenarios` runs actual
+tools and HTTP requests; each observation carries its own deterministic verdict.
+See [scenario coverage](verification/SCENARIOS.md).
