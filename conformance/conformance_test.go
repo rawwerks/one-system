@@ -3,6 +3,8 @@
 // set to absolute paths for the built runtimes and isolated official-SDK interpreter.
 // ONE_SYSTEM_NODE_BINARY selects an explicit Node 24 executable when PATH may be
 // rewritten by toolchain launchers; Bun's node shim is intentionally rejected.
+// ONE_SYSTEM_RUNTIMES=go or hono runs one implementation as a fast inner loop and
+// skips cross-runtime interop; unset (or go,hono) is the dual specification run.
 // No production routing code is imported and no live inference or private data is used.
 package conformance
 
@@ -63,15 +65,55 @@ func conformanceNode() (string, error) {
 	return node, nil
 }
 
+// selectedRuntimes reads ONE_SYSTEM_RUNTIMES: "go", "hono" or "go,hono".
+// Unset or empty selects both, which is the specification run. A single
+// runtime is only a fast inner loop; it never replaces the dual run.
+func selectedRuntimes() ([]string, error) {
+	value := strings.TrimSpace(os.Getenv("ONE_SYSTEM_RUNTIMES"))
+	if value == "" {
+		return []string{"go", "hono"}, nil
+	}
+	seen := map[string]bool{}
+	for _, name := range strings.Split(value, ",") {
+		name = strings.TrimSpace(name)
+		if name != "go" && name != "hono" {
+			return nil, fmt.Errorf("ONE_SYSTEM_RUNTIMES=%q: each entry must be go or hono", value)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("ONE_SYSTEM_RUNTIMES=%q names %s twice", value, name)
+		}
+		seen[name] = true
+	}
+	var names []string
+	for _, name := range []string{"go", "hono"} {
+		if seen[name] {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
 func TestConformance(t *testing.T) {
 	goBinary, honoEntry, skillPython := os.Getenv("ONE_SYSTEM_GO_BINARY"), os.Getenv("ONE_SYSTEM_HONO_ENTRY"), os.Getenv("ONE_SYSTEM_SKILL_PYTHON")
 	if goBinary == "" && honoEntry == "" {
 		t.Skip("dual-runtime HTTP conformance NOT EXERCISED: set ONE_SYSTEM_GO_BINARY, ONE_SYSTEM_HONO_ENTRY, and ONE_SYSTEM_SKILL_PYTHON (or run make check-conformance)")
 	}
-	if goBinary == "" || honoEntry == "" || skillPython == "" {
-		t.Fatal("an intentional conformance run requires ONE_SYSTEM_GO_BINARY, ONE_SYSTEM_HONO_ENTRY, and ONE_SYSTEM_SKILL_PYTHON; refusing partial coverage")
+	names, err := selectedRuntimes()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, path := range []string{goBinary, honoEntry, skillPython} {
+	artifacts := map[string]string{"go": goBinary, "hono": honoEntry}
+	required := []string{skillPython}
+	for _, name := range names {
+		if artifacts[name] == "" || skillPython == "" {
+			if len(names) == 2 {
+				t.Fatal("an intentional conformance run requires ONE_SYSTEM_GO_BINARY, ONE_SYSTEM_HONO_ENTRY, and ONE_SYSTEM_SKILL_PYTHON; refusing partial coverage (set ONE_SYSTEM_RUNTIMES=go or hono for a single-runtime inner loop)")
+			}
+			t.Fatalf("ONE_SYSTEM_RUNTIMES=%s requires ONE_SYSTEM_%s and ONE_SYSTEM_SKILL_PYTHON", name, map[string]string{"go": "GO_BINARY", "hono": "HONO_ENTRY"}[name])
+		}
+		required = append(required, artifacts[name])
+	}
+	for _, path := range required {
 		if !filepath.IsAbs(path) {
 			t.Fatalf("runtime path must be absolute: %q", path)
 		}
@@ -79,11 +121,21 @@ func TestConformance(t *testing.T) {
 			t.Fatalf("runtime artifact is not a regular file: %q (%v)", path, err)
 		}
 	}
-	node, err := conformanceNode()
-	if err != nil {
-		t.Fatal(err)
+	var runtimes []runtimeSpec
+	for _, name := range names {
+		if name == "go" {
+			runtimes = append(runtimes, runtimeSpec{"go", goBinary, nil})
+			continue
+		}
+		node, err := conformanceNode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimes = append(runtimes, runtimeSpec{"hono", node, []string{honoEntry}})
 	}
-	runtimes := []runtimeSpec{{"go", goBinary, nil}, {"hono", node, []string{honoEntry}}}
+	if len(runtimes) == 1 {
+		t.Logf("SINGLE-RUNTIME inner loop (ONE_SYSTEM_RUNTIMES=%s): cross-runtime interop is skipped; run make check-conformance before declaring work done", names[0])
+	}
 	for _, runtime := range runtimes {
 		t.Run(runtime.name, func(t *testing.T) {
 			t.Run("native-lossless", func(t *testing.T) { testNativeLossless(t, runtime) })

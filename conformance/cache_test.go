@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,15 @@ func cacheEnvironment(path string, base map[string]string, overrides map[string]
 	return environment
 }
 
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func cacheStatus(t *testing.T, headers http.Header, want string) {
 	t.Helper()
 	if got := headers.Get(cacheHeader); got != want {
@@ -90,7 +100,13 @@ func cacheBackends(t *testing.T, trace *callTrace, replies int, limits map[strin
 func testDecisionCache(t *testing.T, runtime runtimeSpec) {
 	data := decisionCaseData(t)
 
-	t.Run("unsupported-selector-precedes-cache-lookup", func(t *testing.T) {
+	t.Run("capability-rejections-precede-cache-lookup", func(t *testing.T) {
+		// Neither leaf declares Score, so no automatic or direct route accepts it.
+		score := `{"model":"routing-demo","state":"x","questions":{"q":{"type":"score","criteria":["A","B"]}}}`
+		requests := map[string]string{"unsupported-selector": data.Request}
+		for _, model := range []string{"routing-demo", "local", "remote"} {
+			requests["unsupported-question/"+model] = strings.Replace(score, "routing-demo", model, 1)
+		}
 		for _, serverMode := range []string{"readwrite", "replay"} {
 			for _, unavailable := range []bool{false, true} {
 				name := serverMode + "/empty"
@@ -103,7 +119,9 @@ func testDecisionCache(t *testing.T, runtime runtimeSpec) {
 					remote := upstream(t, trace, "remote")
 					selector := backend("local", local.URL, nil)
 					selector["capabilities"] = map[string]any{"question_types": []string{"noul"}}
-					config := registry("local", "", selector, backend("remote", remote.URL, nil))
+					other := backend("remote", remote.URL, nil)
+					other["capabilities"] = map[string]any{"question_types": []string{"noul", "choice"}}
+					config := registry("local", "", selector, other)
 					path := ledgerPath(t)
 					g := start(t, runtime, config, nil, cacheEnvironment(path, data.Environment, map[string]string{"ONE_SYSTEM_CACHE_MODE": serverMode})...)
 					if unavailable {
@@ -112,17 +130,59 @@ func testDecisionCache(t *testing.T, runtime runtimeSpec) {
 							t.Fatal(err)
 						}
 					}
-					// Both leaves accept the caller; the selector cannot answer
-					// the generated Choice. Cache errors/misses must not mask it.
-					for _, mode := range []string{"", "replay"} {
-						status, headers, body := g.post(t, []byte(data.Request), header{cacheHeader, mode})
-						publicError(t, status, headers, body, 422, "unsupported_capability")
-						cacheStatus(t, headers, "")
+					// Both leaves accept the caller's Noul; the selector cannot
+					// answer the generated Choice. No leaf accepts Score. Cache
+					// errors, misses or replay 404s must not mask any rejection,
+					// and a rejected request never reaches the ledger at all.
+					for _, name := range sortedKeys(requests) {
+						for _, mode := range []string{"", "replay"} {
+							status, headers, body := g.post(t, []byte(requests[name]), header{cacheHeader, mode})
+							publicError(t, status, headers, body, 422, "unsupported_capability")
+							cacheStatus(t, headers, "")
+						}
 					}
 					trace.want(t)
 				})
 			}
 		}
+	})
+	t.Run("routed-hit-skips-selection-and-validation-precedes-lookup", func(t *testing.T) {
+		trace := &callTrace{}
+		remote := upstream(t, trace, "remote", reply{body: selectionResponse("local", "1", "2", "1")})
+		local := upstream(t, trace, "local", reply{body: data.LeafResponse})
+		config := registry("remote", "", backend("local", local.URL, nil), backend("remote", remote.URL, nil))
+		g := start(t, runtime, config, nil, cacheEnvironment(ledgerPath(t), data.Environment, nil)...)
+		status, headers, body := g.post(t, []byte(data.Request))
+		wantStatus(t, status, 200, body)
+		cacheStatus(t, headers, "miss")
+		losslessJSON(t, object(t, body)["usage"], []byte(`{"input_tokens":13,"output_tokens":4}`))
+		trace.want(t, "remote", "local")
+		// A hit replaces the whole routed decision: neither the selector nor
+		// the leaf runs again, and neither one's usage is charged.
+		status, headers, body = g.post(t, []byte(data.Request))
+		wantStatus(t, status, 200, body)
+		cacheStatus(t, headers, "hit")
+		losslessJSON(t, body, []byte(data.ReplayedResponse))
+		// A stored decision never answers a request that authentication or
+		// validation rejects, even when the caller asks for replay only.
+		for _, tc := range []struct {
+			name, auth, request string
+			status              int
+			code                string
+		}{
+			{"wrong-credential", "Bearer WRONG_KEY_CANARY", data.Request, 401, "unauthorized"},
+			{"invalid-question-type", "Bearer " + publicKey, strings.Replace(data.Request, `"type":"noul"`, `"type":"unknown"`, 1), 422, "schema_validation"},
+			{"unknown-model", "Bearer " + publicKey, strings.Replace(data.Request, `"model":"routing-demo"`, `"model":"resolved-leaf"`, 1), 422, "unsupported_model"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				status, headers, body := g.request(t, http.MethodPost, "/v1/systemone", tc.auth, []byte(tc.request), header{cacheHeader, "replay"})
+				publicError(t, status, headers, body, tc.status, tc.code)
+				if headers.Get(cacheHeader) == "hit" || strings.Contains(string(body), "answers") {
+					t.Errorf("a rejected request was answered from the ledger: %v %s", headers, body)
+				}
+			})
+		}
+		trace.want(t, "remote", "local")
 	})
 	t.Run("miss-then-hit-answers-without-inference", func(t *testing.T) {
 		trace := &callTrace{}
@@ -149,6 +209,10 @@ func testDecisionCache(t *testing.T, runtime runtimeSpec) {
 				status, headers, body := g.post(t, []byte(tc.Request))
 				wantStatus(t, status, 200, body)
 				cacheStatus(t, headers, "miss")
+				// The variant is stored under its own key, not dropped.
+				status, headers, body = g.post(t, []byte(tc.Request), header{cacheHeader, "replay"})
+				wantStatus(t, status, 200, body)
+				cacheStatus(t, headers, "hit")
 			})
 			want = append(want, "local")
 			trace.want(t, want...)
@@ -222,24 +286,50 @@ func testDecisionCache(t *testing.T, runtime runtimeSpec) {
 	})
 
 	t.Run("a-failed-decision-is-never-stored", func(t *testing.T) {
-		trace := &callTrace{}
-		scripted := []reply{{status: 503, body: "RAW_CAUSE_CANARY"}, {body: data.LeafResponse}}
-		local := upstream(t, trace, "local", scripted...)
-		config := registry("local", "", backend("local", local.URL, nil))
-		g := start(t, runtime, config, nil, cacheEnvironment(ledgerPath(t), data.Environment, nil)...)
-		status, headers, body := g.post(t, []byte(data.Request))
-		publicError(t, status, headers, body, 503, "upstream_rejected")
-		// A cache-enabled host reports its cache on every response after the
-		// hook, including this failure.
-		cacheStatus(t, headers, "miss")
-		trace.want(t, "local")
-		status, headers, body = g.post(t, []byte(data.Request), header{cacheHeader, "replay"})
-		publicError(t, status, headers, body, 404, "cache_miss")
-		trace.want(t, "local")
-		status, headers, body = g.post(t, []byte(data.Request))
-		wantStatus(t, status, 200, body)
-		cacheStatus(t, headers, "miss")
-		trace.want(t, "local", "local")
+		invalidNoul := strings.Replace(data.LeafResponse, `"noul":0.9`, `"noul":"RAW_CAUSE_CANARY"`, 1)
+		mismatched := strings.Replace(data.LeafResponse, `"answers":{"q"`, `"answers":{"other"`, 1)
+		for _, tc := range []struct {
+			name     string
+			routed   bool
+			failure  reply
+			status   int
+			code     string
+			attempts []string
+		}{
+			{"leaf-rejection", false, reply{status: 503, body: "RAW_CAUSE_CANARY"}, 503, "upstream_rejected", []string{"local"}},
+			{"invalid-answer", false, reply{body: invalidNoul}, 502, "invalid_upstream_response", []string{"local"}},
+			{"mismatched-answer", false, reply{body: mismatched}, 502, "mismatched_answers", []string{"local"}},
+			{"selector-rejection", true, reply{status: 503, body: "RAW_CAUSE_CANARY"}, 503, "upstream_rejected", []string{"remote"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				trace := &callTrace{}
+				var config map[string]any
+				success := []string{"local"}
+				if tc.routed {
+					remote := upstream(t, trace, "remote", tc.failure, reply{body: selectionResponse("local", "1", "2", "1")})
+					local := upstream(t, trace, "local", reply{body: data.LeafResponse})
+					config = registry("remote", "", backend("local", local.URL, nil), backend("remote", remote.URL, nil))
+					success = []string{"remote", "local"}
+				} else {
+					local := upstream(t, trace, "local", tc.failure, reply{body: data.LeafResponse})
+					config = registry("local", "", backend("local", local.URL, nil))
+				}
+				g := start(t, runtime, config, nil, cacheEnvironment(ledgerPath(t), data.Environment, nil)...)
+				status, headers, body := g.post(t, []byte(data.Request))
+				publicError(t, status, headers, body, tc.status, tc.code)
+				// A cache-enabled host reports its cache on every response after the
+				// hook, including this failure.
+				cacheStatus(t, headers, "miss")
+				trace.want(t, tc.attempts...)
+				status, headers, body = g.post(t, []byte(data.Request), header{cacheHeader, "replay"})
+				publicError(t, status, headers, body, 404, "cache_miss")
+				trace.want(t, tc.attempts...)
+				status, headers, body = g.post(t, []byte(data.Request))
+				wantStatus(t, status, 200, body)
+				cacheStatus(t, headers, "miss")
+				trace.want(t, append(tc.attempts, success...)...)
+			})
+		}
 	})
 
 	t.Run("a-decision-survives-restart-and-a-routing-change-partitions", func(t *testing.T) {
@@ -319,13 +409,23 @@ func testDecisionCache(t *testing.T, runtime runtimeSpec) {
 	})
 }
 
-// One ledger file, both implementations. Written by one and replayed by the
-// other in replay mode, so a hit cannot be an accident of fresh inference.
+// One ledger file, every pairing of implementations. Written by one and
+// replayed by the other in replay mode, so a hit cannot be an accident of fresh
+// inference. Same-runtime pairs also prove that a reopened server in replay
+// mode answers from disk. Cross-runtime pairs need both runtimes selected.
 func testDecisionCacheInterop(t *testing.T, runtimes []runtimeSpec) {
 	data := decisionCaseData(t)
-	for _, direction := range [][2]int{{0, 1}, {1, 0}} {
-		writer, reader := runtimes[direction[0]], runtimes[direction[1]]
-		t.Run(writer.name+"-writes-"+reader.name+"-replays", func(t *testing.T) {
+	selected := map[string]runtimeSpec{}
+	for _, runtime := range runtimes {
+		selected[runtime.name] = runtime
+	}
+	for _, pair := range [][2]string{{"go", "go"}, {"go", "hono"}, {"hono", "go"}, {"hono", "hono"}} {
+		t.Run(pair[0]+"-writes-"+pair[1]+"-replays", func(t *testing.T) {
+			writer, writerSelected := selected[pair[0]]
+			reader, readerSelected := selected[pair[1]]
+			if !writerSelected || !readerSelected {
+				t.Skipf("CROSS-RUNTIME INTEROP NOT EXERCISED: %s-writes-%s-replays needs both runtimes; unset ONE_SYSTEM_RUNTIMES for the full specification run", pair[0], pair[1])
+			}
 			trace := &callTrace{}
 			// Both launches must see the identical registry: base URLs and
 			// credentials are part of the configuration revision.

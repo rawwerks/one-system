@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,6 +18,11 @@ import (
 	"testing"
 	"time"
 )
+
+// Decision-cache behavior visible over HTTP is specified for both gateways in
+// conformance/cache_test.go. These tests need the router or store internals:
+// coalescing, planted corruption, Go's serialized size, stdout logging, and
+// the SQLite store's expiry, eviction and file handling.
 
 const cacheTestBody = `{"model":"routing-demo","state":{"user_id":"acct-17","email":"alice@example.test","revision":9007199254740992},"questions":{"q":{"type":"noul","instructions":"Is this positive?"}}}`
 
@@ -203,212 +211,6 @@ func cacheTestAssertError(t *testing.T, response *httptest.ResponseRecorder, sta
 	}
 }
 
-func TestDecisionCacheHitPreservesDecisionAndValidation(t *testing.T) {
-	u := newCacheTestUpstreams(t, nil, nil)
-	r, _ := newCacheTestRouter(t, u.config(t))
-	first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
-	cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-	original := cacheTestDecode(t, first)
-	if original.Model != "leaf" || !reflect.DeepEqual(original.Answers, map[string]any{"q": map[string]any{"type": "noul", "noul": 0.9}}) || original.Usage.Input != 7 || original.Usage.Output != 4 {
-		t.Fatalf("unexpected live decision: %+v", original)
-	}
-	cacheTestAssertHit(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), original)
-
-	unauthorized := cacheTestRequest(cacheTestBody, "replay")
-	unauthorized.Header.Set("Authorization", "Bearer wrong-key")
-	cacheTestAssertError(t, cacheTestServe(r, unauthorized), http.StatusUnauthorized, "unauthorized")
-	invalid := strings.Replace(cacheTestBody, `"type":"noul"`, `"type":"unknown"`, 1)
-	cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(invalid, "replay")), http.StatusUnprocessableEntity, "schema_validation")
-	unsupported := strings.Replace(cacheTestBody, `"model":"routing-demo"`, `"model":"leaf"`, 1)
-	cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(unsupported, "replay")), http.StatusUnprocessableEntity, "unsupported_model")
-	u.assertCalls(t, 1, 1)
-}
-
-func TestDecisionCacheUsesExactRequestBytes(t *testing.T) {
-	u := newCacheTestUpstreams(t, nil, nil)
-	r, _ := newCacheTestRouter(t, u.config(t))
-	cacheTestAssertResponse(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), http.StatusOK, "miss")
-	for i, tc := range []struct {
-		name string
-		body string
-	}{
-		{"question instructions", strings.Replace(cacheTestBody, "Is this positive?", "Is this negative?", 1)},
-		{"question ID", strings.Replace(cacheTestBody, `"q":`, `"other-question":`, 1)},
-		{"opaque user ID", strings.Replace(cacheTestBody, "acct-17", "acct-18", 1)},
-		{"email", strings.Replace(cacheTestBody, "alice@example.test", "bob@example.test", 1)},
-		{"adjacent large integer", strings.Replace(cacheTestBody, "9007199254740992", "9007199254740993", 1)},
-		{"only whitespace", " " + cacheTestBody + "\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			first := cacheTestServe(r, cacheTestRequest(tc.body, ""))
-			cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-			cacheTestAssertHit(t, cacheTestServe(r, cacheTestRequest(tc.body, "")), cacheTestDecode(t, first))
-			u.assertCalls(t, int32(i+2), int32(i+2))
-		})
-	}
-}
-
-func TestDecisionCacheNeverStoresUpstreamFailures(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		selector bool
-		status   int
-		body     string
-		wantCode int
-	}{
-		{"selector rejection", true, http.StatusServiceUnavailable, `{"detail":[]}`, http.StatusServiceUnavailable},
-		{"leaf rejection", false, http.StatusTooManyRequests, `{"detail":[]}`, http.StatusTooManyRequests},
-		{"invalid answer schema", false, http.StatusOK, `{"model":"leaf","answers":{"q":{"type":"noul","noul":"invalid"}},"usage":{"input_tokens":5,"output_tokens":3}}`, http.StatusBadGateway},
-		{"mismatched answer ID", false, http.StatusOK, `{"model":"leaf","answers":{"other":{"type":"noul","noul":0.9}},"usage":{"input_tokens":5,"output_tokens":3}}`, http.StatusBadGateway},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var failing atomic.Bool
-			failing.Store(true)
-			handler := func(w http.ResponseWriter, req *http.Request) {
-				if failing.Load() {
-					w.WriteHeader(tc.status)
-					_, _ = io.WriteString(w, tc.body)
-					return
-				}
-				if tc.selector {
-					cacheTestWriteSelection(w, req)
-				} else {
-					cacheTestWriteLeaf(w, req, 0.9)
-				}
-			}
-			var selectorHandler, leafHandler http.HandlerFunc
-			if tc.selector {
-				selectorHandler = handler
-			} else {
-				leafHandler = handler
-			}
-			u := newCacheTestUpstreams(t, selectorHandler, leafHandler)
-			r, _ := newCacheTestRouter(t, u.config(t))
-			for range 2 {
-				cacheTestAssertResponse(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), tc.wantCode, "")
-			}
-			if tc.selector {
-				u.assertCalls(t, 2, 0)
-			} else {
-				u.assertCalls(t, 2, 2)
-			}
-			cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay")), http.StatusNotFound, "cache_miss")
-			failing.Store(false)
-			first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
-			cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-			cacheTestAssertHit(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), cacheTestDecode(t, first))
-			if tc.selector {
-				u.assertCalls(t, 3, 1)
-			} else {
-				u.assertCalls(t, 3, 3)
-			}
-		})
-	}
-}
-
-func TestDecisionCacheReplaySurvivesReopenAndNeverInfersOnMiss(t *testing.T) {
-	u := newCacheTestUpstreams(t, nil, nil)
-	c := u.config(t)
-	r, closeRouter := newCacheTestRouter(t, c)
-	cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay")), http.StatusNotFound, "cache_miss")
-	u.assertCalls(t, 0, 0)
-	first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
-	cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-	original := cacheTestDecode(t, first)
-	cacheTestAssertHit(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay")), original)
-	closeRouter()
-
-	c.cache.Mode = "replay"
-	reopened, _ := newCacheTestRouter(t, c)
-	cacheTestAssertHit(t, cacheTestServe(reopened, cacheTestRequest(cacheTestBody, "")), original)
-	unseen := strings.Replace(cacheTestBody, "acct-17", "unseen-account", 1)
-	cacheTestAssertError(t, cacheTestServe(reopened, cacheTestRequest(unseen, "")), http.StatusNotFound, "cache_miss")
-	cacheTestAssertResponse(t, cacheTestServe(reopened, cacheTestRequest(cacheTestBody, "bypass")), http.StatusUnprocessableEntity, "")
-	u.assertCalls(t, 1, 1)
-}
-
-func TestDecisionCacheBypassNeitherReadsNorWrites(t *testing.T) {
-	var probability atomic.Int32
-	probability.Store(1)
-	u := newCacheTestUpstreams(t, nil, func(w http.ResponseWriter, req *http.Request) {
-		cacheTestWriteLeaf(w, req, float64(probability.Load())/10)
-	})
-	r, _ := newCacheTestRouter(t, u.config(t))
-	first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
-	cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-	original := cacheTestDecode(t, first)
-	probability.Store(8)
-	bypassed := cacheTestServe(r, cacheTestRequest(cacheTestBody, "bypass"))
-	cacheTestAssertResponse(t, bypassed, http.StatusOK, "bypass")
-	live := cacheTestDecode(t, bypassed)
-	if reflect.DeepEqual(live.Answers, original.Answers) || live.Usage.Input != 7 || live.Usage.Output != 4 {
-		t.Fatalf("bypass did not return the new live decision: %+v", live)
-	}
-	cacheTestAssertHit(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), original)
-	u.assertCalls(t, 2, 2)
-
-	unseen := strings.Replace(cacheTestBody, "acct-17", "bypassed-account", 1)
-	cacheTestAssertResponse(t, cacheTestServe(r, cacheTestRequest(unseen, "bypass")), http.StatusOK, "bypass")
-	cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(unseen, "replay")), http.StatusNotFound, "cache_miss")
-	u.assertCalls(t, 3, 3)
-	cacheTestAssertResponse(t, cacheTestServe(r, cacheTestRequest(unseen, "")), http.StatusOK, "miss")
-	u.assertCalls(t, 4, 4)
-}
-
-func TestDecisionCachePartitionsConfigurationIdentity(t *testing.T) {
-	u := newCacheTestUpstreams(t, nil, nil)
-	base := u.config(t)
-	alternate := base.backends["hosted"]
-	alternate.ID = "alternate"
-	base.backends["alternate"] = alternate
-	r, closeRouter := newCacheTestRouter(t, base)
-	first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
-	cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-	original := cacheTestDecode(t, first)
-	closeRouter()
-
-	for i, tc := range []struct {
-		name   string
-		change func(*config)
-	}{
-		{"epoch", func(c *config) { c.cache.Epoch = "epoch-2" }},
-		{"namespace", func(c *config) { c.cache.Namespace = "another-scope" }},
-		{"public credential", func(c *config) { c.publicKey = "rotated-public-key" }},
-		{"selector", func(c *config) { c.selector = "alternate" }},
-		{"backend model", func(c *config) { b := c.backends["local"]; b.Model = "leaf-v2"; c.backends["local"] = b }},
-		{"backend URL", func(c *config) { b := c.backends["local"]; b.BaseURL += "/alternate"; c.backends["local"] = b }},
-		{"backend credential", func(c *config) { b := c.backends["local"]; b.key = "rotated-leaf-key"; c.backends["local"] = b }},
-		{"registry description", func(c *config) {
-			b := c.backends["local"]
-			b.Description = "changed routing criteria"
-			c.backends["local"] = b
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c := base
-			c.backends = make(map[string]backend, len(base.backends))
-			for id, b := range base.backends {
-				c.backends[id] = b
-			}
-			tc.change(&c)
-			r, closeRouter := newCacheTestRouter(t, c)
-			request := cacheTestRequest(cacheTestBody, "")
-			request.Header.Set("Authorization", "Bearer "+c.publicKey)
-			first := cacheTestServe(r, request)
-			cacheTestAssertResponse(t, first, http.StatusOK, "miss")
-			repeat := cacheTestRequest(cacheTestBody, "replay")
-			repeat.Header.Set("Authorization", "Bearer "+c.publicKey)
-			cacheTestAssertHit(t, cacheTestServe(r, repeat), cacheTestDecode(t, first))
-			u.assertCalls(t, int32(i+2), int32(i+2))
-			closeRouter()
-		})
-	}
-	base.cache.Mode = "replay"
-	reopened, _ := newCacheTestRouter(t, base)
-	cacheTestAssertHit(t, cacheTestServe(reopened, cacheTestRequest(cacheTestBody, "")), original)
-	u.assertCalls(t, 9, 9)
-}
-
 type cacheTestReadSignal struct {
 	io.Reader
 	read chan struct{}
@@ -480,4 +282,299 @@ func TestDecisionCacheCoalescesRequestsAndReleasesCanceledWaiter(t *testing.T) {
 		cacheTestAssertHit(t, cacheTestAwait(t, responses), original)
 	}
 	u.assertCalls(t, 1, 1)
+}
+
+// A hit bypasses the route log, so it must leave its own record: operators
+// otherwise see traffic vanish when the cache is enabled.
+func TestDecisionCacheHitIsLogged(t *testing.T) {
+	u := newCacheTestUpstreams(t, nil, nil)
+	var logs bytes.Buffer
+	r, err := newRouter(u.config(t), slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	cacheTestAssertResponse(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), http.StatusOK, "miss")
+	logs.Reset()
+	cacheTestAssertResponse(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "")), http.StatusOK, "hit")
+	line := logs.String()
+	for _, want := range []string{`"msg":"cache_hit"`, `"latency_ms":`, `"status":200`} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("hit log %q lacks %s", line, want)
+		}
+	}
+	for _, private := range []string{"acct-17", "alice@example.test", "Is this positive?"} {
+		if strings.Contains(line, private) {
+			t.Fatalf("hit log discloses request content %q", private)
+		}
+	}
+}
+
+func TestDecisionCacheRejectsCorruptionAndFailsOpenOnlyOnline(t *testing.T) {
+	u := newCacheTestUpstreams(t, nil, nil)
+	r, _ := newCacheTestRouter(t, u.config(t))
+	first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
+	cacheTestAssertResponse(t, first, http.StatusOK, "miss")
+	original := cacheTestDecode(t, first)
+	// Simulate a damaged on-disk answer, not an upstream inference failure.
+	if _, err := r.cache.store.db.ExecContext(context.Background(),
+		"UPDATE decisions SET response = ?, response_size = ?", []byte(`{"broken":true}`), len(`{"broken":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay")), 503, "cache_unavailable")
+	u.assertCalls(t, 1, 1)
+	recovered := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
+	cacheTestAssertResponse(t, recovered, http.StatusOK, "error")
+	u.assertCalls(t, 2, 2)
+	cacheTestAssertHit(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay")), original)
+
+	if err := r.cache.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cacheTestAssertError(t, cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay")), 503, "cache_unavailable")
+	u.assertCalls(t, 2, 2)
+	online := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
+	cacheTestAssertResponse(t, online, http.StatusOK, "error")
+	if got := cacheTestDecode(t, online).Usage; got.Input == 0 {
+		t.Fatalf("online fallback hid actual inference usage: %+v", got)
+	}
+	u.assertCalls(t, 3, 3)
+}
+
+func TestDecisionCacheSkipsResponsesExpandedBeyondReplayLimit(t *testing.T) {
+	u := newCacheTestUpstreams(t, nil, func(w http.ResponseWriter, req *http.Request) {
+		// Legal upstream JSON is smaller than the transport limit, but '<'
+		// expands to six bytes when the gateway serializes the response.
+		body := `{"model":"leaf","answers":{"q":{"type":"noul","noul":0.9}},"usage":{"input_tokens":5,"output_tokens":3},"padding":"` + strings.Repeat("<", 2<<20) + `"}`
+		_, _ = w.Write([]byte(body))
+	})
+	c := u.config(t)
+	c.cache.MaxBytes = 64 << 20
+	r, _ := newCacheTestRouter(t, c)
+	first := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
+	cacheTestAssertResponse(t, first, http.StatusOK, "miss")
+	if usage := cacheTestDecode(t, first).Usage; usage.Input != 7 || usage.Output != 4 {
+		t.Fatalf("online response lost inference usage: %+v", usage)
+	}
+	replay := cacheTestServe(r, cacheTestRequest(cacheTestBody, "replay"))
+	cacheTestAssertError(t, replay, http.StatusNotFound, "cache_miss")
+	cacheTestAssertResponse(t, replay, http.StatusNotFound, "miss")
+	u.assertCalls(t, 1, 1)
+}
+
+func privateDecisionTestDir(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir()
+	if err := os.Chmod(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestDecisionStorePersistsIndependentResponses(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "private", "decisions.sqlite")
+	store, err := openDecisionStore(path, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	body := []byte(`{"answer":true}`)
+	if err := store.Put(ctx, "decision", body, 10, 100); err != nil {
+		t.Fatal(err)
+	}
+	body[0] = '!'
+	first, err := store.Get(ctx, "decision", 11)
+	if err != nil || string(first) != `{"answer":true}` {
+		t.Fatalf("stored response=%q, err=%v", first, err)
+	}
+	first[0] = '!'
+	second, err := store.Get(ctx, "decision", 12)
+	if err != nil || string(second) != `{"answer":true}` {
+		t.Fatalf("response was aliased: %q, err=%v", second, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, "decision", 12); err == nil {
+		t.Fatal("read after close succeeded")
+	}
+	if err := store.Put(ctx, "other", []byte("other"), 12, 100); err == nil {
+		t.Fatal("write after close succeeded")
+	}
+	store, err = openDecisionStore(path, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	persisted, err := store.Get(ctx, "decision", 13)
+	if err != nil || string(persisted) != `{"answer":true}` {
+		t.Fatalf("reopened response=%q, err=%v", persisted, err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0600 {
+			t.Errorf("file %q has mode %o, want 0600", suffix, info.Mode().Perm())
+		}
+	}
+}
+
+func TestDecisionStoreExpiresWithoutReadRefresh(t *testing.T) {
+	ctx := context.Background()
+	store, err := openDecisionStore(filepath.Join(privateDecisionTestDir(t), "decisions.sqlite"), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Put(ctx, "decision", []byte("answer"), 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	for _, now := range []int64{10, 19, 20, 21} {
+		body, err := store.Get(ctx, "decision", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if now < 20 && string(body) != "answer" {
+			t.Errorf("at %d got %q, want answer", now, body)
+		}
+		if now >= 20 && body != nil {
+			t.Errorf("at expiry %d got %q, want miss", now, body)
+		}
+	}
+}
+
+func TestDecisionStoreEvictsOldestWithinByteBudget(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(privateDecisionTestDir(t), "decisions.sqlite")
+	store, err := openDecisionStore(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
+	put := func(key, body string, now int64) {
+		t.Helper()
+		if err := store.Put(ctx, key, []byte(body), now, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertEntries := func(want map[string]string) {
+		t.Helper()
+		total := 0
+		for _, key := range []string{"a", "b", "c", "oversized"} {
+			body, err := store.Get(ctx, key, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != want[key] {
+				t.Errorf("key %s=%q, want %q", key, body, want[key])
+			}
+			total += len(body)
+		}
+		if total > 10 {
+			t.Errorf("cached %d response bytes, budget is 10", total)
+		}
+	}
+	put("a", "aaaa", 1)
+	put("b", "bbbb", 2)
+	if _, err := store.Get(ctx, "a", 2); err != nil {
+		t.Fatal(err)
+	}
+	put("c", "cccc", 3)
+	assertEntries(map[string]string{"b": "bbbb", "c": "cccc"})
+	put("oversized", "01234567890", 4)
+	put("b", "01234567890", 4)
+	assertEntries(map[string]string{"b": "bbbb", "c": "cccc"})
+	put("b", "BBBBBB", 5)
+	assertEntries(map[string]string{"b": "BBBBBB", "c": "cccc"})
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = openDecisionStore(path, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEntries(map[string]string{"b": "BBBBBB"})
+}
+
+func TestDecisionStorePrunesExpiredBeforeUsefulEntries(t *testing.T) {
+	ctx := context.Background()
+	store, err := openDecisionStore(filepath.Join(privateDecisionTestDir(t), "decisions.sqlite"), 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Put(ctx, "useful", []byte("keep"), 1, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, "expired", []byte("gone"), 2, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, "new", []byte("next"), 3, 100); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"useful": "keep", "expired": "", "new": "next"} {
+		body, err := store.Get(ctx, key, 3)
+		if err != nil || string(body) != want {
+			t.Errorf("key %s=%q, want %q, err=%v", key, body, want, err)
+		}
+	}
+}
+
+func TestDecisionStoreRejectsUnsupportedVersion(t *testing.T) {
+	path := filepath.Join(privateDecisionTestDir(t), "decisions.sqlite")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 42"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openDecisionStore(path, 100)
+	if err == nil {
+		_ = store.Close()
+		t.Fatal("unsupported cache version was accepted")
+	}
+}
+
+func TestDecisionStoreRejectsUnsafeOrBrokenPaths(t *testing.T) {
+	for _, path := range []string{"", ":memory:", "file:cache.sqlite?mode=memory", "cache.sqlite?mode=memory"} {
+		store, err := openDecisionStore(path, 100)
+		if err == nil {
+			_ = store.Close()
+			t.Errorf("unsafe path %q was accepted", path)
+		}
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := openDecisionStore(filepath.Join(parent, "cache.sqlite"), 100); err == nil {
+		_ = store.Close()
+		t.Fatal("nonprivate parent directory was accepted")
+	}
+	info, err := os.Stat(parent)
+	if err != nil || info.Mode().Perm() != 0755 {
+		t.Fatalf("existing parent directory was changed: info=%v, err=%v", info, err)
+	}
+	broken := filepath.Join(privateDecisionTestDir(t), "broken.sqlite")
+	if err := os.WriteFile(broken, []byte("not a SQLite database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := openDecisionStore(broken, 100); err == nil {
+		_ = store.Close()
+		t.Fatal("corrupt database was accepted")
+	}
 }

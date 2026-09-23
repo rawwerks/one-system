@@ -12,16 +12,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
-func loggingTestConfig(t *testing.T, u *cacheTestUpstreams, cache bool) config {
+// Exchange-history behavior visible over HTTP is specified for both gateways
+// in conformance/logging_test.go. These tests need internals: broken request
+// and response readers, a transport that fails with secrets in its error, and
+// direct inspection of storage paths, aliases and file modes.
+
+func loggingTestConfig(t *testing.T, u *cacheTestUpstreams) config {
 	t.Helper()
 	c := u.config(t)
-	if !cache {
-		c.cache = cacheSettings{}
-	}
+	c.cache = cacheSettings{}
 	c.log = logSettings{Path: filepath.Join(t.TempDir(), "private", "exchanges.sqlite"), Mode: "record"}
 	return c
 }
@@ -60,243 +62,6 @@ func logBody(t *testing.T, record logRecord) []byte {
 	return body
 }
 
-func TestExchangeLogUsesEscapedOutgoingPath(t *testing.T) {
-	paths := make(chan string, 2)
-	u := newCacheTestUpstreams(t, func(w http.ResponseWriter, req *http.Request) {
-		paths <- req.URL.EscapedPath()
-		cacheTestWriteSelection(w, req)
-	}, func(w http.ResponseWriter, req *http.Request) {
-		paths <- req.URL.EscapedPath()
-		cacheTestWriteLeaf(w, req, 0.9)
-	})
-	c := loggingTestConfig(t, u, false)
-	for id, b := range c.backends {
-		b.BaseURL += "/tenant%2Fteam/%E2%98%83"
-		c.backends[id] = b
-	}
-	r, _ := newCacheTestRouter(t, c)
-	req := cacheTestRequest(cacheTestBody, "")
-	req.URL.RawQuery = "private=QUERY_CANARY"
-	cacheTestAssertResponse(t, cacheTestServe(r, req), http.StatusOK, "")
-	u.assertCalls(t, 1, 1)
-	observed := map[string]string{"selector": <-paths, "backend": <-paths}
-	records := readLogRecords(t, r.logs.db)
-	if len(records) != 6 {
-		t.Fatalf("expected three exchange pairs, got %d records", len(records))
-	}
-	for scope, path := range observed {
-		if path != "/tenant%2Fteam/%E2%98%83/v1/systemone" {
-			t.Fatalf("%s fixture received unexpected path %q", scope, path)
-		}
-		kinds := map[string]int{}
-		for _, record := range records {
-			if record.Scope == scope {
-				kinds[record.Kind]++
-				if record.Path != path {
-					t.Errorf("%s %s logged %q, fixture received %q", scope, record.Kind, record.Path, path)
-				}
-			}
-		}
-		if kinds["request"] != 1 || kinds["response"] != 1 {
-			t.Fatalf("%s did not record both sides: %v", scope, kinds)
-		}
-	}
-	for _, record := range records {
-		if record.Scope == "gateway" && record.Path != "/v1/systemone" {
-			t.Errorf("inbound log path changed: %q", record.Path)
-		}
-		raw, _ := json.Marshal(record)
-		for _, excluded := range []string{"QUERY_CANARY", u.selector.URL, u.leaf.URL} {
-			if bytes.Contains(raw, []byte(excluded)) {
-				t.Errorf("record exposed transport metadata %q", excluded)
-			}
-		}
-	}
-}
-
-func TestExchangeLogPreservesFullExchangesAndReplayPerInvocation(t *testing.T) {
-	for _, cache := range []bool{false, true} {
-		name := "logging only"
-		if cache {
-			name = "logging and cache"
-		}
-		t.Run(name, func(t *testing.T) {
-			var observedRequests [][]byte
-			var observedResponses [][]byte
-			var logPath string
-			var observedMu sync.Mutex
-			upstream := func(scope string, response string) http.HandlerFunc {
-				return func(w http.ResponseWriter, req *http.Request) {
-					body, err := io.ReadAll(req.Body)
-					if err != nil {
-						t.Error(err)
-					}
-					// A second SQLite connection must see the request before any
-					// inference can execute, not an uncommitted buffered INSERT.
-					observedMu.Lock()
-					path := logPath
-					observedMu.Unlock()
-					db, err := sql.Open("sqlite", path)
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					records := readLogRecords(t, db)
-					_ = db.Close()
-					if len(records) == 0 {
-						t.Error("upstream ran without a committed request record")
-						return
-					}
-					last := records[len(records)-1]
-					if last.Kind != "request" || last.Scope != scope || !bytes.Equal(logBody(t, last), body) {
-						t.Errorf("upstream ran before its exact request was committed: %+v", last)
-					}
-					observedMu.Lock()
-					observedRequests = append(observedRequests, body)
-					observedResponses = append(observedResponses, []byte(response))
-					observedMu.Unlock()
-					_, _ = io.WriteString(w, response)
-				}
-			}
-			selection := " {\"model\":\"selector\",\"answers\":{\"backend\":{\"type\":\"choice\",\"choice\":\"local\",\"confidence\":1,\"probabilities\":{\"local\":1,\"hosted\":0}}},\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}\n"
-			leaf := " {\"model\":\"leaf\",\"answers\":{\"q\":{\"type\":\"noul\",\"noul\":0.9}},\"usage\":{\"input_tokens\":5,\"output_tokens\":3}}\n"
-			u := newCacheTestUpstreams(t, upstream("selector", selection), upstream("backend", leaf))
-			c := loggingTestConfig(t, u, cache)
-			observedMu.Lock()
-			logPath = c.log.Path
-			observedMu.Unlock()
-			r, closeRouter := newCacheTestRouter(t, c)
-			var publicBodies [][]byte
-			for _, mode := range []string{"", "", "bypass"} {
-				req := cacheTestRequest(cacheTestBody, mode)
-				req.URL.RawQuery = "query-secret=never-record"
-				req.Header.Set("Cookie", "cookie-secret=never-record")
-				response := cacheTestServe(r, req)
-				cacheTestAssertResponse(t, response, 200, "")
-				publicBodies = append(publicBodies, append([]byte(nil), response.Body.Bytes()...))
-			}
-			if cache {
-				u.assertCalls(t, 2, 2)
-				var replay cacheTestResponse
-				if err := json.Unmarshal(publicBodies[1], &replay); err != nil || replay.Usage != (tokenUsage{}) {
-					t.Fatalf("replay charged inference: %+v, %v", replay, err)
-				}
-				// Cache maintenance must not prune any exchange history.
-				if _, err := r.cache.store.db.Exec("DELETE FROM decisions"); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				u.assertCalls(t, 3, 3)
-			}
-			closeRouter()
-			reopened, err := newExchangeLog(c.log)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer reopened.db.Close()
-			records := readLogRecords(t, reopened.db)
-			wantCount := 18
-			if cache {
-				wantCount = 14
-			}
-			if len(records) != wantCount {
-				t.Fatalf("retained %d records, want %d", len(records), wantCount)
-			}
-			observedMu.Lock()
-			defer observedMu.Unlock()
-			requests := make(map[string]logRecord)
-			ids := make(map[string]bool)
-			gatewayIDs := make(map[string]bool)
-			upstreamRequest, upstreamResponse, gatewayResponse := 0, 0, 0
-			for _, record := range records {
-				if ids[record.ID] || record.Version != 1 || record.Time <= 0 || !record.BodyComplete {
-					t.Fatalf("invalid complete exchange record: %+v", record)
-				}
-				ids[record.ID] = true
-				if record.Path != "/v1/systemone" || record.Method != "POST" {
-					t.Fatalf("unsafe exchange location: %+v", record)
-				}
-				encoded, _ := json.Marshal(record)
-				for _, private := range []string{"query-secret", "cookie-secret", "Bearer", "Authorization", "leaf-key", "selector-key"} {
-					if bytes.Contains(encoded, []byte(private)) {
-						t.Fatalf("record leaked transport metadata %q", private)
-					}
-				}
-				if record.Kind == "request" {
-					requests[record.ExchangeID] = record
-					if record.Scope == "gateway" {
-						if gatewayIDs[record.RequestID] || string(logBody(t, record)) != cacheTestBody {
-							t.Fatal("gateway invocation identity or exact body was reused")
-						}
-						gatewayIDs[record.RequestID] = true
-					} else {
-						if !gatewayIDs[record.RequestID] || !bytes.Equal(logBody(t, record), observedRequests[upstreamRequest]) {
-							t.Fatal("upstream request was not correlated or captured exactly")
-						}
-						upstreamRequest++
-					}
-					continue
-				}
-				request, ok := requests[record.ExchangeID]
-				if !ok || request.RequestID != record.RequestID || request.Scope != record.Scope || record.Status == nil || *record.Status != 200 {
-					t.Fatalf("unpaired response: %+v", record)
-				}
-				delete(requests, record.ExchangeID)
-				if record.Scope == "gateway" {
-					if !bytes.Equal(logBody(t, record), publicBodies[gatewayResponse]) {
-						t.Fatal("gateway logged different bytes from the generated response")
-					}
-					if cache && record.Cache != []string{"miss", "hit", "bypass"}[gatewayResponse] {
-						t.Fatalf("lost cache outcome: %q", record.Cache)
-					}
-					gatewayResponse++
-				} else {
-					if !bytes.Equal(logBody(t, record), observedResponses[upstreamResponse]) {
-						t.Fatal("upstream bytes or original token usage were normalized in the audit log")
-					}
-					upstreamResponse++
-				}
-			}
-			if len(requests) != 0 || len(gatewayIDs) != 3 || gatewayResponse != 3 {
-				t.Fatal("successful exchanges were left incomplete")
-			}
-		})
-	}
-}
-
-func TestExchangeLogFailureStopsInferenceAndSelectorFallback(t *testing.T) {
-	for _, tc := range []struct {
-		scope, kind              string
-		selectorCalls, leafCalls int32
-	}{
-		{"gateway", "request", 0, 0},
-		{"selector", "request", 0, 0},
-		{"selector", "response", 1, 0},
-		{"backend", "request", 1, 0},
-		{"backend", "response", 1, 1},
-		{"gateway", "response", 1, 1},
-	} {
-		t.Run(tc.scope+" "+tc.kind, func(t *testing.T) {
-			u := newCacheTestUpstreams(t, nil, nil)
-			c := loggingTestConfig(t, u, false)
-			c.fallback = "local"
-			r, _ := newCacheTestRouter(t, c)
-			_, err := r.logs.db.Exec(`CREATE TRIGGER fail_record BEFORE INSERT ON log_events
-				WHEN json_extract(NEW.record, '$.scope') = '` + tc.scope + `' AND json_extract(NEW.record, '$.kind') = '` + tc.kind + `'
-				BEGIN SELECT RAISE(ABORT, 'private-storage-failure'); END;`)
-			if err != nil {
-				t.Fatal(err)
-			}
-			response := cacheTestServe(r, cacheTestRequest(cacheTestBody, ""))
-			cacheTestAssertError(t, response, 503, "logging_unavailable")
-			if strings.Contains(response.Body.String(), "private-storage-failure") {
-				t.Fatal("storage error leaked to caller")
-			}
-			u.assertCalls(t, tc.selectorCalls, tc.leafCalls)
-		})
-	}
-}
-
 type logBrokenReader struct {
 	body []byte
 }
@@ -326,7 +91,7 @@ func TestExchangeLogCapturesRejectedAndIncompleteInboundBodies(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			u := newCacheTestUpstreams(t, nil, nil)
-			r, _ := newCacheTestRouter(t, loggingTestConfig(t, u, false))
+			r, _ := newCacheTestRouter(t, loggingTestConfig(t, u))
 			req := cacheTestRequest(tc.body, "")
 			req.URL.Path = tc.path
 			req.Header.Set("Authorization", "Bearer "+tc.auth)
@@ -372,7 +137,7 @@ func TestExchangeLogCapturesUpstreamErrorsWithoutTransportSecrets(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			u := newCacheTestUpstreams(t, nil, nil)
-			c := loggingTestConfig(t, u, false)
+			c := loggingTestConfig(t, u)
 			r, _ := newCacheTestRouter(t, c)
 			r.client.Transport = logRoundTripper(func(*http.Request) (*http.Response, error) {
 				if tc.status == 0 {
@@ -409,44 +174,12 @@ func TestExchangeLogCapturesUpstreamErrorsWithoutTransportSecrets(t *testing.T) 
 	}
 }
 
-func TestExchangeLogConfigurationAndPrivateStorage(t *testing.T) {
-	for _, tc := range []struct {
-		name, mode, path string
-		wantError        bool
-		wantMode         string
-	}{
-		{"absent", "", "", false, "off"},
-		{"configured", "", "private/log.sqlite", false, "record"},
-		{"explicit off", "off", "private/log.sqlite", false, "off"},
-		{"missing storage", "record", "", true, ""},
-		{"invalid mode", "replay", "private/log.sqlite", true, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ONE_SYSTEM_LOG_PATH", tc.path)
-			t.Setenv("ONE_SYSTEM_LOG_MODE", tc.mode)
-			settings, err := loadLogSettings()
-			if (err != nil) != tc.wantError || (!tc.wantError && settings.Mode != tc.wantMode) {
-				t.Fatalf("settings=%+v error=%v", settings, err)
-			}
-		})
-	}
-	path := filepath.Join(t.TempDir(), "must-not-be-created", "log.sqlite")
-	logs, err := newExchangeLog(logSettings{Path: path, Mode: "off"})
-	if err != nil || logs != nil {
-		t.Fatalf("explicit off opened storage: %v", err)
-	}
-	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("disabled logging touched the filesystem")
-	}
-	for _, bad := range []string{":memory:", "file:log.sqlite?mode=memory"} {
-		if logs, err := newExchangeLog(logSettings{Path: bad, Mode: "record"}); err == nil {
-			_ = logs.db.Close()
-			t.Fatal("non-file log storage accepted")
-		}
-	}
+// Settings, explicit off and non-file storage are specified over HTTP in
+// conformance/logging_test.go. These checks inspect the opened store directly.
+func TestExchangeLogPrivateStorage(t *testing.T) {
 	private := privateDecisionTestDir(t)
-	path = filepath.Join(private, "log.sqlite")
-	logs, err = newExchangeLog(logSettings{Path: path, Mode: "record"})
+	path := filepath.Join(private, "log.sqlite")
+	logs, err := newExchangeLog(logSettings{Path: path, Mode: "record"})
 	if err != nil {
 		t.Fatal(err)
 	}

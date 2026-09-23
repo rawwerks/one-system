@@ -467,6 +467,8 @@ func testFallback(t *testing.T, runtime runtimeSpec) {
 		{"selector-error-fails-closed", "local", reply{status: 401, body: `{"detail":{"error_type":"RAW_CAUSE_CANARY","message":"BACKEND_REMOTE_KEY_CANARY /synthetic/PRIVATE_ROOT_CANARY"}}`}, reply{body: basicResponse}, []string{"remote", "local"}, 200, ""},
 		{"selector-error-without-fallback", "", reply{status: 401, body: `{"detail":{"message":"RAW_CAUSE_CANARY"}}`}, reply{}, []string{"remote"}, 502, "upstream_rejected"},
 		{"invalid-selector-response-falls-back", "local", reply{body: `{"broken":"RAW_CAUSE_CANARY"}`}, reply{body: basicResponse}, []string{"remote", "local"}, 200, ""},
+		// A choice outside the offered backends is an invalid answer, never a destination.
+		{"unconfigured-selection-without-fallback", "", reply{body: selectionResponse("unconfigured", "1", "2", "1")}, reply{}, []string{"remote"}, 502, "mismatched_answers"},
 		{"leaf-error-is-not-retried", "local", reply{body: selectionResponse("remote", "1", "2", "1")}, reply{status: 422, body: `{"detail":{"message":"PRIVATE_STATE_CANARY"}}`}, []string{"remote", "remote"}, 422, "upstream_rejected"},
 		{"low-confidence-stays-private", "local", reply{body: selectionResponse("remote", "0.7499", "2", "1")}, reply{body: basicResponse}, []string{"remote", "local"}, 200, ""},
 		{"legacy-confidence-equality-escalates", "local", reply{body: selectionResponse("remote", "0.75", "2", "1")}, reply{body: basicResponse}, []string{"remote", "remote"}, 200, ""},

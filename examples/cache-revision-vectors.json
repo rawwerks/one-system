@@ -1,5 +1,5 @@
 {
-  "_purpose": "Cross-runtime decision-cache protocol vectors consumed by BOTH implementations: cache_revision_test.go and hono/src/cache.test.ts. asset_digests pins the exact file bytes each host hashes; revisions pin the configuration-revision protocol independently of those files; durations pin the operator TTL syntax. Registries and question files are RAW TEXT because the protocol hashes exact bytes, including whitespace.",
+  "_purpose": "Cross-runtime decision-cache protocol vectors consumed by BOTH implementations: cache_vectors_test.go and hono/src/cache.test.ts. asset_digests pins the exact file bytes each host hashes; revisions pin the configuration-revision protocol independently of those files; durations pin the operator TTL syntax. Registries and question files are RAW TEXT because the protocol hashes exact bytes, including whitespace.",
   "asset_digests": {
     "contract/backend-selection.question.json": {
       "sha256": "6725c4dbde92c7175eb38b8a31f2f8ad4876862ffb94b48d85148c39dc3a186d"

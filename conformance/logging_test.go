@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,8 @@ type logRecord struct {
 	ExchangeID string `json:"exchange_id"`
 	Kind       string `json:"kind"`
 	Scope      string `json:"scope"`
+	Time       int64  `json:"time"`
+	Method     string `json:"method"`
 	Path       string `json:"path"`
 	Body       string `json:"body_base64"`
 	Complete   bool   `json:"body_complete"`
@@ -28,9 +32,16 @@ type logRecord struct {
 	Cache      string `json:"cache"`
 }
 
+// sqliteDSN waits for the gateway's own write lock instead of failing at
+// once with SQLITE_BUSY: full-sync commits can stall on a loaded machine.
+func sqliteDSN(path string) string {
+	dsn := url.URL{Scheme: "file", Path: path, RawQuery: url.Values{"_pragma": {"busy_timeout(10000)"}}.Encode()}
+	return dsn.String()
+}
+
 func openLog(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +57,7 @@ func logRecords(t *testing.T, db *sql.DB) []logRecord {
 	}
 	defer rows.Close()
 	var records []logRecord
+	ids := map[string]bool{}
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
@@ -55,9 +67,10 @@ func logRecords(t *testing.T, db *sql.DB) []logRecord {
 		if err := json.Unmarshal([]byte(raw), &record); err != nil {
 			t.Fatal(err)
 		}
-		if record.Version != 1 || record.ID == "" || record.RequestID == "" || record.ExchangeID == "" {
+		if record.Version != 1 || record.ID == "" || ids[record.ID] || record.RequestID == "" || record.ExchangeID == "" || record.Time <= 0 || record.Method == "" {
 			t.Fatalf("unusable record identity: %s", raw)
 		}
+		ids[record.ID] = true
 		// Headers and query strings are not part of the opt-in body history.
 		for _, secret := range []string{publicKey, backendKey("local"), backendKey("remote"), "COOKIE_CANARY", "QUERY_CANARY"} {
 			if strings.Contains(raw, secret) {
@@ -83,6 +96,20 @@ func loggedBody(t *testing.T, record logRecord) []byte {
 	return body
 }
 
+// assertPrivateFiles checks the database and any SQLite sidecars that exist.
+func assertPrivateFiles(t *testing.T, path string) {
+	t.Helper()
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		info, err := os.Stat(path + suffix)
+		if suffix != "" && os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("history file %q is not private: %v %v", suffix, info, err)
+		}
+	}
+}
+
 func logPair(t *testing.T, records []logRecord, requestID, scope string) (logRecord, logRecord) {
 	t.Helper()
 	var request, response []logRecord
@@ -106,23 +133,52 @@ func logPair(t *testing.T, records []logRecord, requestID, scope string) (logRec
 	return request[0], response[0]
 }
 
+// assertCommittedRequest runs inside an upstream handler: a second SQLite
+// connection must already see the exact request that is about to execute, not
+// an uncommitted or buffered write. It runs off the test goroutine, so it only
+// reports errors.
+func assertCommittedRequest(t *testing.T, path, scope string, received []byte) {
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer db.Close()
+	var raw string
+	if err := db.QueryRow("SELECT record FROM log_events ORDER BY rowid DESC LIMIT 1").Scan(&raw); err != nil {
+		t.Errorf("%s ran before any committed request record: %v", scope, err)
+		return
+	}
+	var record logRecord
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		t.Error(err)
+		return
+	}
+	body, err := base64.StdEncoding.DecodeString(record.Body)
+	if err != nil || record.Kind != "request" || record.Scope != scope || !bytes.Equal(body, received) {
+		t.Errorf("%s ran before its exact request was committed: %s", scope, raw)
+	}
+}
+
 func testExchangeLogging(t *testing.T, runtime runtimeSpec) {
 	t.Run("upstream-pairs-use-actual-escaped-path", func(t *testing.T) {
 		trace := &callTrace{}
 		paths := make(chan string, 2)
+		path := filepath.Join(t.TempDir(), "private", "history.sqlite")
 		selection := `{"model":"selector","answers":{"backend":{"type":"choice","choice":"local","confidence":1,"probabilities":{"local":1,"remote":0}}},"usage":{"input_tokens":2,"output_tokens":1}}`
-		handler := func(body string) reply {
+		handler := func(scope, body string) reply {
 			return reply{handle: func(w http.ResponseWriter, req *http.Request) {
 				paths <- req.URL.EscapedPath()
+				calls := trace.snapshot()
+				assertCommittedRequest(t, path, scope, calls[len(calls)-1].body)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(body))
 			}}
 		}
-		remote := upstream(t, trace, "remote", handler(selection))
-		local := upstream(t, trace, "local", handler(basicResponse))
+		remote := upstream(t, trace, "remote", handler("selector", selection))
+		local := upstream(t, trace, "local", handler("backend", basicResponse))
 		prefix := "/tenant%2Fteam/%E2%98%83"
 		config := registry("remote", "", backend("local", local.URL+prefix, nil), backend("remote", remote.URL+prefix, nil))
-		path := filepath.Join(t.TempDir(), "private", "history.sqlite")
 		g := start(t, runtime, config, nil, "ONE_SYSTEM_LOG_PATH="+path)
 		status, _, body := g.request(t, http.MethodPost, "/v1/systemone?private=QUERY_CANARY", "Bearer "+publicKey, []byte(basicRequest))
 		wantStatus(t, status, 200, body)
@@ -262,7 +318,8 @@ func testExchangeLogging(t *testing.T, runtime runtimeSpec) {
 		wantStatus(t, status, 422, malformed)
 		status, _, denied := g.request(t, http.MethodPost, "/v1/systemone", "Bearer wrong", []byte(basicRequest))
 		wantStatus(t, status, 401, denied)
-		trace.want(t, "local", "local")
+		calls := trace.want(t, "local", "local")
+		assertPrivateFiles(t, path)
 		g.stop(t)
 		db := openLog(t, path)
 		records := logRecords(t, db)
@@ -288,10 +345,16 @@ func testExchangeLogging(t *testing.T, runtime runtimeSpec) {
 			if i < 3 && res.Cache != []string{"miss", "hit", "bypass"}[i] {
 				t.Fatalf("exchange %d lost cache outcome: %q", i, res.Cache)
 			}
+			if req.Method != http.MethodPost || res.Method != http.MethodPost {
+				t.Fatalf("exchange %d lost its method: %q/%q", i, req.Method, res.Method)
+			}
 			if i == 0 || i == 2 {
-				_, leaf := logPair(t, records, request.RequestID, "backend")
+				sent, leaf := logPair(t, records, request.RequestID, "backend")
 				if !bytes.Equal(loggedBody(t, leaf), []byte(basicResponse)) {
 					t.Fatal("original upstream response/usage was changed")
+				}
+				if !bytes.Equal(loggedBody(t, sent), calls[i/2].body) {
+					t.Fatal("logged upstream request differs from the bytes the upstream received")
 				}
 			} else {
 				for _, event := range records {
@@ -309,6 +372,13 @@ func testExchangeLogging(t *testing.T, runtime runtimeSpec) {
 		second.stop(t)
 		if got := len(logRecords(t, db)); got != before+2 {
 			t.Fatalf("restart overwrote history: %d records, want %d", got, before+2)
+		}
+		// Cache maintenance must never prune exchange history.
+		if _, err := openLog(t, filepath.Join(dir, "cache.sqlite")).Exec("DELETE FROM decisions"); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(logRecords(t, db)); got != before+2 {
+			t.Fatalf("clearing decisions changed history: %d records, want %d", got, before+2)
 		}
 		trace.want(t, "local", "local")
 	})
@@ -357,6 +427,48 @@ func testExchangeLogging(t *testing.T, runtime runtimeSpec) {
 			t.Fatalf("failed audit hid the completed cache lookup: got %q, want hit", got)
 		}
 		trace.want(t, "local")
+	})
+
+	t.Run("each-recording-failure-stops-before-the-next-step", func(t *testing.T) {
+		trace := &callTrace{}
+		selection := reply{body: selectionResponse("local", "1", "2", "1")}
+		remote := upstream(t, trace, "remote", selection, selection, selection, selection)
+		local := upstream(t, trace, "local", reply{body: basicResponse}, reply{body: basicResponse})
+		config := registry("remote", "local", backend("local", local.URL, nil), backend("remote", remote.URL, nil))
+		path := filepath.Join(t.TempDir(), "private", "history.sqlite")
+		g := start(t, runtime, config, nil, "ONE_SYSTEM_LOG_PATH="+path)
+		db := openLog(t, path)
+		var want []string
+		for i, tc := range []struct {
+			scope, kind string
+			executed    []string
+		}{
+			{"gateway", "request", nil},
+			{"selector", "request", nil},
+			// Selection already ran, but the fallback must not run after it.
+			{"selector", "response", []string{"remote"}},
+			{"backend", "request", []string{"remote"}},
+			// Executed inference is neither retried nor rolled back.
+			{"backend", "response", []string{"remote", "local"}},
+			{"gateway", "response", []string{"remote", "local"}},
+		} {
+			t.Run(tc.scope+"-"+tc.kind, func(t *testing.T) {
+				trigger := fmt.Sprintf("fail_point_%d", i)
+				if _, err := db.Exec(`CREATE TRIGGER ` + trigger + ` BEFORE INSERT ON log_events WHEN json_extract(NEW.record, '$.scope') = '` + tc.scope + `' AND json_extract(NEW.record, '$.kind') = '` + tc.kind + `' BEGIN SELECT RAISE(ABORT, 'RAW_CAUSE_CANARY'); END`); err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					if _, err := db.Exec("DROP TRIGGER " + trigger); err != nil {
+						t.Fatal(err)
+					}
+				}()
+				status, headers, body := g.post(t, []byte(basicRequest))
+				// publicError also proves the storage error text never reaches the caller.
+				publicError(t, status, headers, body, 503, "logging_unavailable")
+				want = append(want, tc.executed...)
+				trace.want(t, want...)
+			})
+		}
 	})
 
 	t.Run("storage-failure-blocks-inference-and-selector-fallback", func(t *testing.T) {
