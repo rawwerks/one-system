@@ -13,12 +13,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Exchange-history behavior visible over HTTP is specified for both gateways
 // in conformance/logging_test.go. These tests need internals: broken request
 // and response readers, a transport that fails with secrets in its error, and
 // direct inspection of storage paths, aliases and file modes.
+
+// No root test asserts write latency; a slow race-instrumented SQLite commit
+// must not turn a correct rejection into logging_unavailable.
+func init() { logWriteTimeout = time.Minute }
 
 func loggingTestConfig(t *testing.T, u *cacheTestUpstreams) config {
 	t.Helper()

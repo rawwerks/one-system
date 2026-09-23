@@ -183,6 +183,11 @@ func (l *exchangeLog) initialize() error {
 	return rows.Close()
 }
 
+// logWriteTimeout bounds each durable INSERT; the gateway fails closed with
+// logging_unavailable past it. Tests raise it: under -race a multi-megabyte
+// record can take longer without any change in behavior.
+var logWriteTimeout = 10 * time.Second
+
 func (l *exchangeLog) append(ctx context.Context, record logRecord) error {
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -190,7 +195,7 @@ func (l *exchangeLog) append(ctx context.Context, record logRecord) error {
 	}
 	// A disconnected client must not erase the response trace. Persistence has
 	// its own bounded deadline; each INSERT returns only after its durable commit.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logWriteTimeout)
 	defer cancel()
 	_, err = l.db.ExecContext(ctx, "INSERT INTO log_events (id, request_id, exchange_id, record) VALUES (?, ?, ?, ?)",
 		record.ID, record.RequestID, record.ExchangeID, string(data))
