@@ -209,10 +209,12 @@ export async function collectPersistenceWorker(root: string): Promise<Scenario[]
       prior_event_count: beforeRestart.length, restored_event_count: restored.length,
       prior_ids_preserved: beforeRestart.every(old => restored.some(event => event.id === old.id)),
     }, restarted.cache === 'hit' && calls.length === 4 && calls.length === callsBeforeRestart && restored.length === beforeRestart.length + 2 && beforeRestart.every(old => restored.some(event => event.id === old.id)));
-    await fetch(base + '/__expire', {method: 'POST'});
+    // The clear itself is evidence: an unchecked failure would surface later as a misleading cache hit.
+    const expire = await fetch(base + '/__expire', {method: 'POST', signal: AbortSignal.timeout(30_000)});
+    const cleared = {status: expire.status, body: (await expire.text()).slice(0, 500)};
     const afterEviction = await history();
     const newMiss = await post();
-    record('independent-retention', 'Removing cached decisions must not delete recording history; the next identical request infers again rather than treating history as a cache.', {history_before: restored.length, history_after_cache_clear: afterEviction.length, prior_ids_preserved: restored.every(old => afterEviction.some(event => event.id === old.id)), response: newMiss, upstream_call_count: calls.length}, afterEviction.length === restored.length && restored.every(old => afterEviction.some(event => event.id === old.id)) && newMiss.cache === 'miss' && calls.length === 5);
+    record('independent-retention', 'Removing cached decisions must not delete recording history; the next identical request infers again rather than treating history as a cache.', {cache_clear: cleared, history_before: restored.length, history_after_cache_clear: afterEviction.length, prior_ids_preserved: restored.every(old => afterEviction.some(event => event.id === old.id)), response: newMiss, upstream_call_count: calls.length}, cleared.status === 200 && afterEviction.length === restored.length && restored.every(old => afterEviction.some(event => event.id === old.id)) && newMiss.cache === 'miss' && calls.length === 5);
     const capacityResponse = await fetch(base + '/__cache-budget', {signal: AbortSignal.timeout(30_000)});
     const capacity = await capacityResponse.json() as {budget: number; inserted_bytes: number; before: {entries: number; bytes: number}; after: {entries: number; bytes: number}; oldest_key: string; large_entry_bytes: number};
     record('capacity-large-insert', 'A successful D1 cache insertion must enforce its payload byte budget even when more than 512 older small entries must be evicted. Evict oldest-written entries first and retain the new in-budget response.', capacity,
