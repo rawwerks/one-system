@@ -24,6 +24,13 @@ function fakeAgent(replies: object[], maxOutputBytes?: number) {
   return { generate, stdin, pids };
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Poll instead of sleeping a fixed time: a loaded host can be slow to start or reap a process. */
+async function eventually(condition: () => boolean, ms = 10_000): Promise<boolean> {
+  for (const deadline = Date.now() + ms; Date.now() < deadline; await new Promise(done => setTimeout(done, 25))) {
+    try { if (condition()) return true; } catch { /* not yet */ }
+  }
+  return false;
+}
 const valid = JSON.stringify({ refund: { type: 'noul', instructions: 'Does the customer ask for a refund?' } });
 
 test('an agent CLI receives the rendered prompt on stdin and answers on stdout; stderr stays private', async () => {
@@ -77,8 +84,8 @@ test('cancellation stops the agent process', async () => {
   const started = Date.now();
   await assert.rejects(run(generateChecked('slow', cli.generate, { decode: t => t }), 'x', { allow: [], timeoutMs: 300 }));
   assert.ok(Date.now() - started < 5000);
-  await new Promise(done => setTimeout(done, 200));
-  assert.equal(alive(cli.pids()[0]!), false);
+  // The deadline can fire before the agent records its PID; it must still end up stopped.
+  assert.ok(await eventually(() => cli.pids().length > 0 && !alive(cli.pids()[0]!)), 'agent process still running');
 });
 
 test('oversized agent output is refused', async () => {
@@ -95,6 +102,9 @@ test('the extracted schema and validator accept the repository question files', 
     assert.deepEqual(questionProblems(questions), [], file);
   }
   assert.deepEqual(questionProblems({ q: { type: 'essay' } }), ['questions.q.type: must be one of choice, noul, score']);
+  assert.deepEqual(questionProblems({ questions: { q: { type: 'noul', instructions: 'x' } } }),
+    ['return the questions object itself, mapping question IDs to questions, not wrapped in a "questions" key']);
+  assert.deepEqual(questionProblems({ questions: { type: 'noul', instructions: 'A question whose ID is questions' } }), []);
   assert.throws(() => parseJson('not json'), Rejected);
 });
 
@@ -154,10 +164,10 @@ test('an abort with a falsy reason still fails and stops the agent', async () =>
   const cli = fakeAgent([{ sleep: 30_000 }]);
   const controller = new AbortController();
   const pending = cli.generate({ prompt: 'x', feedback: [] }, controller.signal);
-  setTimeout(() => controller.abort(0), 100);
+  assert.ok(await eventually(() => cli.pids().length > 0), 'agent never started');
+  controller.abort(0);
   await assert.rejects(pending, (reason: unknown) => reason === 0);
-  await new Promise(done => setTimeout(done, 300));
-  assert.equal(alive(cli.pids()[0]!), false);
+  assert.ok(await eventually(() => !alive(cli.pids()[0]!)), 'agent process still running');
 });
 
 test('verify retries only on a Rejected it throws itself, not one from a called component', async () => {

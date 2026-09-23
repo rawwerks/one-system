@@ -63,6 +63,12 @@ function limitProblems(questions: Questions, limits: Capabilities): string[] {
  * selector limits on automatic routes are not modelled here.
  */
 export function questionProblems(value: unknown, route: readonly (Capabilities | null)[] = [null], structuredState = false): string[] {
+  // Generators often wrap the answer as {"questions": {...}}; say so plainly.
+  const inner = (value as { questions?: unknown } | null)?.questions;
+  if (value && typeof value === 'object' && Object.keys(value).length === 1 && inner && typeof inner === 'object' && !Array.isArray(inner)
+      && Object.values(inner).some(question => ['choice', 'noul', 'score'].includes((question as { type?: unknown })?.type as string))) {
+    return ['return the questions object itself, mapping question IDs to questions, not wrapped in a "questions" key'];
+  }
   // An unknown type would otherwise surface as every branch's oneOf mismatch.
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const unknown = Object.entries(value).filter(([, question]) => !['choice', 'noul', 'score'].includes((question as { type?: unknown })?.type as string));
