@@ -18,7 +18,7 @@
     {"from": "hono/src/logging.ts", "to": "contract/invariants.json#invariants.logging.exchange-history", "kind": "derives-facts-from"},
     {"from": "hono/src/log-store-node.ts", "to": "contract/invariants.json#invariants.logging.exchange-history", "kind": "derives-facts-from"},
     {"from": "hono/src/log-store-r2.ts", "to": "contract/invariants.json#invariants.logging.exchange-history", "kind": "derives-facts-from"},
-    {"from": "cache_key_test.go", "to": "examples/cache-key-vectors.json", "kind": "derives-facts-from"},
+    {"from": "cache_vectors_test.go", "to": "examples/cache-key-vectors.json", "kind": "derives-facts-from"},
     {"from": "cache_vectors_test.go", "to": "examples/cache-revision-vectors.json", "kind": "derives-facts-from"},
     {"from": "hono/src/cache.test.ts", "to": "examples/cache-key-vectors.json", "kind": "derives-facts-from"},
     {"from": "hono/src/cache.test.ts", "to": "examples/cache-revision-vectors.json", "kind": "derives-facts-from"},
