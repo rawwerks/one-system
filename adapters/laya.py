@@ -48,6 +48,27 @@ def unique_object(pairs):
     return result
 
 
+def normalize_distribution(answer):
+    """Translate Laya's independently rounded probabilities into a distribution."""
+    probabilities = answer["probabilities"]
+    if len(probabilities) < 2 or any(
+        type(p) not in (int, float) or not math.isfinite(p) or not 0 <= p <= 1
+        for p in probabilities.values()
+    ):
+        raise RuntimeError("Laya returned invalid probabilities")
+    total = math.fsum(probabilities.values())
+    # Laya 0.3.3 rounds every outcome to four decimals. Only repair the
+    # corresponding rounding error, never hide missing or invalid probability mass.
+    if total <= 0 or abs(total - 1) > len(probabilities) * 0.00005 + 1e-6:
+        raise RuntimeError("Laya returned an invalid probability total")
+    for key, probability in probabilities.items():
+        probabilities[key] = probability / total
+    entropy = -math.fsum(p * math.log(p) for p in probabilities.values() if p > 0)
+    answer["confidence"] = min(1.0, max(0.0, 1 - entropy / math.log(len(probabilities))))
+    if answer["type"] == "score":
+        answer["score"] = math.fsum(int(level) * p for level, p in probabilities.items())
+
+
 class LocalLaya:
     def __init__(self, model_path, threads, runtime="torch"):
         if runtime not in ("torch", "mlx"):
@@ -196,6 +217,8 @@ class LocalLaya:
                 key: value for key, value in answer.items()
                 if key in self.schemas[component]["properties"]
             }
+            if question["type"] in ("choice", "score"):
+                normalize_distribution(answers[qid])
             if question["type"] == "score":
                 legend = {str(index): value for index, value in enumerate(question["criteria"])}
                 if answers[qid]["legend"] != legend:

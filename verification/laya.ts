@@ -42,6 +42,39 @@ export async function collectLaya(root: string, options: { checkpoint?: boolean 
     const schema = validateLayaDocument(root, python, 'ModelMetadataList', document);
     record(`schema-control-${id}`, `This synthetic catalogue control must be ${expectedValid ? 'accepted' : 'rejected'} by the vendored ModelMetadataList schema; release_date is required.`, { document, schema }, schema.valid === expectedValid);
   }
+  const roundedControls: Json[] = [
+    { type: 'choice', choice: 'vocabulary', probabilities: { mixed: 0.1667, other: 0.297, vocabulary: 0.5364 }, confidence: 0.0959 },
+    { type: 'score', score: 1.5599, probabilities: { '0': 0.11, '1': 0.22, '2': 0.6699 }, confidence: 0 },
+    ...[{ a: 0, b: 0 }, { a: 0.2, b: 0.3 }, { a: true, b: false }, { a: -0.1, b: 1.1 }].map(probabilities => ({ type: 'choice', probabilities })),
+  ];
+  const normalization = spawnSync(python, ['-c', [
+    'import json,sys',
+    'from adapters.laya import normalize_distribution',
+    'def translate(answer):',
+    '    try:',
+    '        normalize_distribution(answer)',
+    '        return {"answer":answer}',
+    '    except Exception as error:',
+    '        return {"error":type(error).__name__}',
+    'print(json.dumps([translate(answer) for answer in json.load(sys.stdin)]))',
+  ].join('\n')], { cwd: root, env, input: JSON.stringify(roundedControls), timeout: 20_000, encoding: 'utf8' });
+  type Normalized = { answer?: { type: string; probabilities: Record<string, number>; confidence: number; score?: number }; error?: string };
+  let normalizationEvidence: Json = null;
+  try { normalizationEvidence = JSON.parse(normalization.stdout); } catch { /* Failed evidence remains explicit. */ }
+  const normalized = Array.isArray(normalizationEvidence) ? normalizationEvidence as Normalized[] : [];
+  const normalizedAnswer = (item: Normalized | undefined): boolean => {
+    const answer = item?.answer;
+    if (!answer) return false;
+    const probabilities = Object.values(answer.probabilities);
+    const total = probabilities.reduce((sum, p) => sum + p, 0);
+    const entropy = -probabilities.reduce((sum, p) => sum + (p > 0 ? p * Math.log(p) : 0), 0);
+    return probabilities.every(p => Number.isFinite(p) && p >= 0 && p <= 1) && Math.abs(total - 1) <= 1e-12
+      && Math.abs(answer.confidence - (1 - entropy / Math.log(probabilities.length))) <= 1e-12
+      && (answer.type !== 'score' || Math.abs(Number(answer.score) - Object.entries(answer.probabilities).reduce((sum, [level, p]) => sum + Number(level) * p, 0)) <= 1e-12);
+  };
+  record('rounded-distributions', 'Native Choice/Score distributions must repair independent four-decimal rounding, derive confidence/score consistently, and reject invalid probability mass rather than fabricate an answer.',
+    { controls: roundedControls, translated: normalizationEvidence, exit_code: normalization.status },
+    normalization.status === 0 && normalized.length === roundedControls.length && normalizedAnswer(normalized[0]) && normalizedAnswer(normalized[1]) && normalized.slice(2).every(item => item.error === 'RuntimeError'));
   const empty = join(output, 'empty-checkpoint');
   mkdirSync(empty);
   for (const [id, modelPath, selectedRuntime, expectedError] of [
@@ -87,11 +120,12 @@ export async function collectLaya(root: string, options: { checkpoint?: boolean 
         const value = JSON.parse(body);
         const { department, refund_requested: refund, urgency } = value.answers;
         const unit = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
-        const distribution = (value: Record<string, unknown>, names: string[]) => value && Object.keys(value).length === names.length && names.every(key => Object.hasOwn(value, key) && unit(value[key])) && Math.abs(Object.values(value).reduce<number>((sum, v) => sum + Number(v), 0) - 1) <= 0.011;
+        const distribution = (value: Record<string, unknown>, names: string[]) => value && Object.keys(value).length === names.length && names.every(key => Object.hasOwn(value, key) && unit(value[key])) && Math.abs(Object.values(value).reduce<number>((sum, v) => sum + Number(v), 0) - 1) <= 1e-8;
         return value.model === 'laya-english' && JSON.stringify(Object.keys(value.answers).sort()) === JSON.stringify(Object.keys(input.questions).sort())
           && department.type === 'choice' && department.choice === 'billing' && unit(department.confidence) && distribution(department.probabilities, ['billing', 'technical', 'sales'])
           && refund.type === 'noul' && unit(refund.noul) && !Object.hasOwn(refund, 'confidence')
           && urgency.type === 'score' && unit(urgency.confidence) && Number.isFinite(urgency.score) && urgency.score >= 0 && urgency.score <= 2 && distribution(urgency.probabilities, ['0', '1', '2'])
+          && Math.abs(urgency.score - Object.entries(urgency.probabilities).reduce((sum, [level, p]) => sum + Number(level) * Number(p), 0)) <= 1e-8
           && JSON.stringify(urgency.legend) === JSON.stringify(Object.fromEntries(input.questions.urgency.criteria.map((item: Json, index: number) => [String(index), item])))
           && Object.values(value.answers).every(answer => !Object.hasOwn(answer as object, 'action'))
           && Number.isSafeInteger(value.usage.input_tokens) && value.usage.input_tokens > 0 && Number.isSafeInteger(value.usage.output_tokens) && value.usage.output_tokens >= 0;
