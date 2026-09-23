@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, symlinkSync, copyFileSync, renameSync, lstatSync, readlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Json } from './scenarios.ts';
+import { collectComposition } from './composition.ts';
 
 type ObjectValue = { [key: string]: any };
 type Run = { exit: number; stdout: string; stderr: string };
@@ -324,6 +325,7 @@ export async function collectExamples(root: string): Promise<Record[]> {
   await releaseScenarios();
   await audienceScenarios();
   await ensembleScenarios();
+  records.push(...await collectComposition(root));
   save(join(scratch, 'observations.json'), records);
   return records;
 

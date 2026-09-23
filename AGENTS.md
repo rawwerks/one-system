@@ -65,6 +65,13 @@ Do not add Python tests or test discovery. Cross-language scenarios belong in
 `verification/` as TypeScript with deterministic verdicts and actual execution evidence.
 Add shared verification tooling in TypeScript. Do not add inference engines to the gateways.
 
+`composition/` is client-side code above the HTTP API, with no package dependencies.
+One System ships no LLM clients or provider SDKs and hosts no generation: text
+generation is bring-your-own through the `Generate` interface (an agent CLI in
+print/exec mode over stdin/stdout, or application code such as
+`examples/generators/openai-responses.mts`). Keep provider code in examples that
+applications copy, never as a maintained dependency.
+
 Stage new source files before verification so true-up can resolve them. Keep
 prompts, contracts, tests, docs, and dependency declarations in sync. Save agent
 handoff details in local-only Mycelium notes; normal local note reading and writing

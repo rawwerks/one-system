@@ -43,6 +43,7 @@ help:
 	  'Worker deployment check: make check-worker (bundle only; no account required).' \
 	  'Worker local runtime check: make check-worker-local (synthetic loopback services, no deployment).' \
 	  'Cross-language scenarios: make check-scenarios (offline, deterministic).' \
+	  'Composition (client-side, no dependencies): composition/*.mts; bring your own generator, e.g. an agent CLI in print mode.' \
 	  'Dependency checks: make true-up-check (true-up 0.2.1; newly added source files must be tracked).' \
 	  'Edit coverage: make true-up-impact BASE=HEAD (advisory, not semantic proof).' \
 	  'Optional local adapter: make setup-laya (requires uv; checkpoint supplied separately).' \
@@ -216,6 +217,7 @@ serve-laya:
 review: build-conformance
 	@set -a; test ! -f .env || . ./.env; set +a; exec $(NODE) verification/review.ts
 
-check-verification:
+# Composition reuses the gateway's generated request validator, so build Hono first.
+check-verification: build-hono
 	$(NODE) hono/node_modules/typescript/bin/tsc -p verification/tsconfig.json
 	$(NODE) --test verification/*.test.ts

@@ -163,6 +163,43 @@ invalid stages stop the example without retries, fallback, or a partial answer.
 An unsuccessful output directory contains an incomplete report and whatever
 stage bodies were available before failure; it never contains a final response.
 
+## Compose judgments in your own code
+
+[`composition/`](composition/) is optional client-side TypeScript above the HTTP
+API, with no package dependencies. `run` executes components under one budget
+and deadline; [`patterns.mts`](composition/patterns.mts) shows routing, fan-out
+with adjudication, and recursive classification built from ordinary code and
+native System One requests. The gateway is unchanged.
+
+### Bring your own generator
+
+One System ships no LLM client and hosts no text generation. When an application
+needs new text, including new System One questions, it supplies a `Generate`
+function and One System checks what comes back:
+
+- **An agent CLI you already use**, in print/exec mode: `agentCli('claude', ['-p'])`,
+  `agentCli('pi', ['-p'])` or `agentCli('codex', ['exec'])`. The prompt goes to
+  stdin and the answer comes from stdout; model, login and subscription stay with
+  the CLI.
+- **Your own API call**, for example [the OpenAI Responses API with plain
+  `fetch`](examples/generators/openai-responses.mts). Copy and adapt it; you own
+  the key, model and client.
+
+`generateChecked` validates each draft, feeds the reason back and retries.
+`questionAuthor` does this for System One questions: it gives the generator the
+official schema from [the pinned OpenAPI description](schema/typesafe.openapi.json),
+the target route's limits from `GET /v1/capabilities`, and
+[question-writing guidance](composition/question-guidance.md), then checks the
+result with the gateway's own validator. Your code keeps `model` and `state`.
+
+```sh
+node examples/generators/author-questions.mts --agent 'claude -p' --model local-demo \
+  --task 'Detect refund requests and how urgent they are' [--state state.json]
+```
+
+The agent's zero exit status is not trusted: some CLIs print provider errors to
+stdout and exit 0, and such output is rejected and retried like any invalid draft.
+
 ## Build your own configuration
 
 Give your registry a `name`, list compatible HTTP backends, and choose your

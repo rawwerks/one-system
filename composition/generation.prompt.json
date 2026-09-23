@@ -1,0 +1,8 @@
+{
+  "_purpose": "How a GenerationRequest becomes the single stdin text an agent CLI receives. Sections are omitted when their field is empty.",
+  "system": "{{system}}",
+  "task": "Task:\n{{prompt}}",
+  "schema": "Respond with exactly one JSON value that matches this JSON Schema, and nothing else: no prose, no explanation, no code fences.\n\n{{schema}}",
+  "feedback": "Earlier answers to this task were rejected. Fix every problem listed below, then answer the task again from the beginning.\n\n{{feedback}}",
+  "feedbackItem": "Rejected answer {{n}}:\n{{draft}}\nProblem: {{reason}}"
+}
