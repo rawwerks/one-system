@@ -42,13 +42,33 @@ its tests; it does not install dependencies or call inference.
 
 ## System One reviews System One
 
-`make review [BASE=<ref>]` is the advisory dogfooding loop. It starts a temporary
-Go gateway with the [review registry](../examples/jev-lint.backends.json), sends the
-files changed since `BASE` (default `HEAD`; override with `FILES="a b"`) in
-`state.sources` with the [agent review questions](../examples/agent-review.questions.json)
-(override with `QUESTIONS=path`), and prints each judgment. One request per run;
-the exact request and response are kept in `.build/review/`. It needs
-`TYPESAFE_API_KEY`, may incur charges, and is never a gate.
+`make review [BASE=<ref>]` is the advisory dogfooding loop, built on the composition
+runtime. It follows a judge-the-bulk method: the rubric is frozen before any data
+is read, System One classifies every unit, and a person reads only what it flags.
+
+- **Rubric:** [`verification/review.questions.json`](../verification/review.questions.json),
+  versioned. `scope` and `weakens_checks` are Choices whose labels name observable
+  evidence; `provider_dependency`, `secret_exposure` and `inference_in_gateway` are
+  Nouls for the repository's own rules. Changing it invalidates earlier verdicts:
+  judge everything again and keep the old run for comparison.
+- **Unit:** one changed file's diff against `BASE` (default `origin/main`, including
+  uncommitted tracked work), with every commit message in the range, capped at
+  24,000 characters with a visible marker. Deleted files, lockfiles and binaries
+  are skipped and counted.
+- **Judging:** one request per file with all questions, through a temporary Go gateway
+  and the [review registry](../examples/jev-lint.backends.json) (pinned
+  `jev-1.13.0`), eight at a time. A failed request stays in its row.
+- **Escalation:** a file is flagged when a Choice is not a clear label (`belongs`;
+  `none` or `accounted`), when its non-clear labels together carry 0.3 or more, when
+  a Noul is 0.3 or more, or on error. Uncertainty between two clear labels is not risk.
+- **Report:** counts per label and flag, skips and truncations, then the files to read.
+  Confirm or overturn each flag by reading the diff. Verdicts are kept in
+  `.build/review/<run>/verdicts.json`; `REPORT=<that file> node verification/review.ts`
+  re-applies the escalation rule without new inference.
+
+It needs `TYPESAFE_API_KEY`, sends every changed file to hosted Jev (review the
+diff for private content first), may incur charges, and is never a gate.
+`QUESTIONS=path` substitutes another frozen rubric.
 
 The agent review questions turn concrete code-quality concerns into native Choice
 questions. The review registry pins the sole evaluator to `jev-1.13.0`; to review by

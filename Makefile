@@ -27,7 +27,7 @@ help:
 	  'Full developer setup: mise install && make setup-dev; inspect with make doctor.' \
 	  'The one gate: make check (everything; the pre-push hook and hosted workflow run exactly this).' \
 	  'Fast loop: make check-go; make check-conformance ONE_SYSTEM_RUNTIMES=go (or hono).' \
-	  'Advisory dogfooding: make review [BASE=main] sends changed files through One System to pinned Jev once.' \
+	  'Advisory dogfooding: make review [BASE=origin/main] judges each changed file against a frozen rubric and lists what to read.' \
 	  'Push gate: make setup-hooks once per clone; pre-push then runs make setup-dev check on each pushed branch or tag tip.' \
 	  'Same gate without pushing: make check-commit REV=HEAD (required before jj git push, which runs no Git hooks).' \
 	  'Hosted workflows are opt-in only: gh workflow run conformance.yml, check.yml, or release.yml --ref <revision>.' \

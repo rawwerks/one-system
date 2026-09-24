@@ -393,10 +393,11 @@ identities and private registries do not belong in tracked files.
 
 ## Use the system while building it
 
-`make review [BASE=<ref>]` sends the files changed since `BASE` (default `HEAD`)
-through a temporary One System gateway to pinned Jev, once, and prints advisory
-judgments. It needs `TYPESAFE_API_KEY` and may incur charges. It is never a gate:
-treat answers as review signals and confirm them with tests and source reading.
+`make review [BASE=<ref>]` judges each file changed since `BASE` (default
+`origin/main`) against a frozen rubric through a temporary One System gateway and
+pinned Jev, and lists the files to read. It needs `TYPESAFE_API_KEY` and may incur
+charges. It is never a gate: confirm each flag by reading the diff. See
+[System One reviews System One](docs/development-checks.md#system-one-reviews-system-one).
 
 Cross-language tests are TypeScript scenarios under `verification/`. There is no
 Python test framework or discovery command. `make check-scenarios` runs actual

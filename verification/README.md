@@ -17,13 +17,10 @@ repository source and model output: keep them untracked and review them before
 sharing. Real credentials are never recorded; scenarios may record explicitly
 synthetic credentials to verify authentication and forwarding.
 
-`make review` is advisory, never a gate. It sends the files changed since `BASE`
-(default `HEAD`; `FILES="a b"` overrides) in `state.sources` with
-[`agent-review.questions.json`](../examples/agent-review.questions.json)
-(`QUESTIONS=path` overrides) to backend `hosted` of
-[`jev-lint.backends.json`](../examples/jev-lint.backends.json), through a temporary
-authenticated Go gateway. It needs `TYPESAFE_API_KEY` and may incur charges.
-Confirm any finding with a test or by reading the source.
+`make review` is advisory, never a gate: one request per changed file against the
+frozen rubric in [`review.questions.json`](review.questions.json), fanned out through
+the composition runtime, with a fixed escalation rule. See
+[System One reviews System One](../docs/development-checks.md#system-one-reviews-system-one).
 
 To add a scenario, append a row with an explicit contract and a deterministic
 `passed` verdict computed from the actual observation, in the collector that owns

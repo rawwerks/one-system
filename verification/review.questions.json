@@ -1,0 +1,32 @@
+{
+  "scope": {
+    "type": "choice",
+    "instructions": "`diff` is one file's change inside a larger change whose commit messages (subjects and bodies) are listed in `change`. Does this file's change belong to that described change? Judge the hunks in `diff`, not the file name.",
+    "criteria": {
+      "belongs": "Every hunk implements, tests, or documents something named in `change`, or follows mechanically from it.",
+      "mixed": "Most hunks belong to `change`, but at least one hunk changes behavior that `change` does not describe.",
+      "unrelated": "No hunk relates to anything described in `change`."
+    }
+  },
+  "weakens_checks": {
+    "type": "choice",
+    "instructions": "Does `diff` remove or loosen any assertion, test, validation, or error check? If it does, is the removal accounted for, either by equivalent or stronger checks added in this diff or by a reason stated in `change` (for example, that another suite now covers it or that the checked feature was removed)?",
+    "criteria": {
+      "none": "No assertion, test, validation, or error check is removed or loosened.",
+      "accounted": "Checks are removed or loosened, and this diff adds equivalent or stronger checks or `change` states where the coverage now lives or why the check no longer applies.",
+      "unaccounted": "Checks are removed or loosened with no equivalent added in this diff and no reason given in `change`."
+    }
+  },
+  "provider_dependency": {
+    "type": "noul",
+    "instructions": "Does `diff` add a dependency on, an import of, or a network request to an LLM provider SDK or provider API (for example OpenAI, Anthropic, Google, or a multi-provider client library) from code outside `examples/`? Calling a System One `/v1/systemone` endpoint, and tests that run example code against a local fake server, do not count."
+  },
+  "secret_exposure": {
+    "type": "noul",
+    "instructions": "Does `diff` write, log, print, or return the value of a credential, API key, or token, or send it anywhere other than the service it authenticates to? Sending a key in an Authorization header to the endpoint it belongs to, mentioning only a variable name, and clearly synthetic test values do not count."
+  },
+  "inference_in_gateway": {
+    "type": "noul",
+    "instructions": "Does `diff` add model inference, model loading, or text generation inside the Go gateway (the repository-root `.go` files) or the Hono gateway (files under `hono/`)? Forwarding requests to configured backends does not count."
+  }
+}

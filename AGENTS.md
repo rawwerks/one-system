@@ -42,9 +42,9 @@ Use `make true-up-impact BASE=<ref>` to list the implementations and conformance
 cases that derive from a changed spec file; edit coverage is not semantic proof.
 
 Use One System to build One System. Before changing meaningful behavior, read the
-relevant contract and tests. `make review [BASE=<ref>]` sends your changed files
-through One System to pinned Jev once and prints advisory judgments; confirm any
-finding with a test or by reading the source. Keep model questions as versioned
+relevant contract and tests. `make review [BASE=<ref>]` judges every changed file
+against the frozen rubric in `verification/review.questions.json` and lists what to
+read; read each flagged diff and confirm or overturn it. Keep model questions as versioned
 artifacts and evaluate their judgments on representative cases; do not tune a
 question merely to make an implementation pass. Missing credentials mean the
 review did not run; say so rather than implying it passed.
