@@ -28,11 +28,20 @@ const LOCKFILE = /(^|\/)(bun\.lock|package-lock\.json|uv\.lock|go\.sum|requireme
 export interface Unit { file: string; state: Json; truncated: boolean }
 export type Verdict = { file: string; answers?: SystemOneResponse['answers']; error?: string; usage?: SystemOneResponse['usage'] };
 
-/** Deterministic exclusions that are never judged: deleted files and lockfiles. */
-export function prefilter(file: string, status: string): string | null {
+/** Deterministic exclusions that are never judged: deleted files, lockfiles and binaries. */
+export function prefilter(file: string, status: string, binary = false): string | null {
   if (status.startsWith('D')) return 'deleted';
   if (LOCKFILE.test(file)) return 'lockfile';
+  if (binary) return 'binary';
   return null;
+}
+
+/** Paths git reports as binary (`-\t-` in --numstat), never guessed from diff text. */
+export function binaryPaths(numstat: string): Set<string> {
+  return new Set(numstat.split('\0').filter(Boolean).flatMap(line => {
+    const match = /^-\t-\t(.+)$/.exec(line);
+    return match ? [match[1]!] : [];
+  }));
 }
 
 export function unit(file: string, change: readonly string[], diff: string): Unit {
@@ -113,14 +122,14 @@ async function main() {
   const entries = git('diff', '-z', '--name-status', '--no-renames', base).split('\0').filter(Boolean);
   // Full commit messages: bodies explain moves and removals a single-file diff cannot show.
   const change = git('log', '--format=%B%x00', `${base}..HEAD`).split('\0').map(message => message.trim()).filter(Boolean);
+  const binary = binaryPaths(git('diff', '-z', '--numstat', '--no-renames', base));
   const skipped: Record<string, number> = {};
   const units: Unit[] = [];
   for (let i = 0; i + 1 < entries.length; i += 2) {
     const [status, file] = [entries[i]!, entries[i + 1]!];
-    const why = prefilter(file, status);
+    const why = prefilter(file, status, binary.has(file));
     if (why) { skipped[why] = (skipped[why] ?? 0) + 1; continue; }
     const diff = git('diff', '--no-color', base, '--', file);
-    if (diff.includes('Binary files')) { skipped.binary = (skipped.binary ?? 0) + 1; continue; }
     units.push(unit(file, change, diff));
   }
   if (!units.length) { console.log(`review: nothing to judge against ${base}.`); return; }

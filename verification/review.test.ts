@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { questionProblems } from '../composition/questions.mts';
-import { CAP, judgeUnits, prefilter, reasons, report, unit } from './review.ts';
+import { binaryPaths, CAP, judgeUnits, prefilter, reasons, report, unit } from './review.ts';
 
 const rubric = JSON.parse(readFileSync(join(import.meta.dirname, 'review.questions.json'), 'utf8'));
 const clean = { scope: { type: 'choice', choice: 'belongs', probabilities: { belongs: 0.9, mixed: 0.08, unrelated: 0.02 }, confidence: 0.8 },
@@ -21,6 +21,9 @@ test('pre-filter skips deletions and lockfiles; units are capped visibly', () =>
   assert.equal(prefilter('go.sum', 'M'), 'lockfile');
   assert.equal(prefilter('verify.ts', 'D'), 'deleted');
   assert.equal(prefilter('router.go', 'M'), null);
+  assert.equal(prefilter('logo.png', 'M', true), 'binary');
+  // Binary status comes from git, not from diff text: a source file may mention 'Binary files'.
+  assert.deepEqual([...binaryPaths('-\t-\tlogo.png\x0012\t3\tverification/review.ts\x00')], ['logo.png']);
   const big = unit('a.ts', ['subject'], 'x'.repeat(CAP + 10));
   assert.equal(big.truncated, true);
   assert.match((big.state as { diff: string }).diff, /\[truncated: 10 more characters\]$/);
